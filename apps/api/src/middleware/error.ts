@@ -1,0 +1,20 @@
+import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
+import { AppError } from "@fee/shared";
+import { randomUUID } from "crypto";
+
+export function errorHandler(error: FastifyError, req: FastifyRequest, reply: FastifyReply) {
+  const correlationId = randomUUID();
+  if (error instanceof AppError) {
+    return reply.status(error.statusCode).send({
+      code: error.code,
+      message: error.message,
+      correlationId,
+      details: error.details,
+    });
+  }
+  if (error.statusCode === 401) {
+    return reply.status(401).send({ code: "UNAUTHORIZED", message: "Authentication required", correlationId });
+  }
+  req.log.error({ err: error, correlationId }, "Unhandled error");
+  return reply.status(500).send({ code: "INTERNAL_ERROR", message: "An unexpected error occurred", correlationId });
+}

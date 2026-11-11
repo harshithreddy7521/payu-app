@@ -1,0 +1,374 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum IndustryProfile { SCHOOL SPORTS RESTAURANT }
+enum OrgStatus { DRAFT UNDER_REVIEW ACTION_REQUIRED ACTIVE RESTRICTED }
+enum UserRole { OWNER FINANCE BRANCH_MANAGER COLLECTOR SUPPORT }
+enum BillStatus { DRAFT ISSUED PARTIAL PAID CANCELLED EXPIRED }
+enum PaymentLinkStatus { ACTIVE EXPIRED REVOKED PAID }
+enum AttemptStatus { PENDING SUCCESS FAILED EXPIRED UNKNOWN }
+enum RefundStatus { REQUESTED SUBMITTED SUCCEEDED FAILED }
+enum SettlementBatchStatus { SCHEDULED RUNNING COMPLETED FAILED }
+enum SettlementItemStatus { PENDING SUBMITTED SETTLED FAILED HELD RETURNED UNKNOWN }
+enum LedgerEntryType { PAYMENT REFUND FEE SETTLEMENT HOLD HOLD_RELEASE ADJUSTMENT }
+enum MessageChannel { WHATSAPP SMS EMAIL }
+enum DeliveryStatus { QUEUED SUBMITTED DELIVERED FAILED SUPPRESSED UNKNOWN }
+enum BillingFrequency { ONE_TIME MONTHLY }
+enum DestinationType { BANK_ACCOUNT UPI_VPA }
+
+model Organisation {
+  id        String          @id @default(cuid())
+  name      String
+  profile   IndustryProfile
+  status    OrgStatus       @default(DRAFT)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  branches    Branch[]
+  users       User[]
+  roleGrants  RoleGrant[]
+  members     Member[]
+  groups      Group[]
+  bills       Bill[]
+  ledger      LedgerEntry[]
+  batches     SettlementBatch[]
+  destinations DestinationVersion[]
+}
+
+model Branch {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  org        Organisation @relation(fields: [orgId], references: [id])
+  roleGrants RoleGrant[]
+  groups     Group[]
+  bills      Bill[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  orgId        String
+  email        String   @unique
+  passwordHash String
+  name         String
+  mfaEnabled   Boolean  @default(false)
+  mfaSecret    String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  org        Organisation @relation(fields: [orgId], references: [id])
+  roleGrants RoleGrant[]
+  auditEvents AuditEvent[]
+}
+
+model RoleGrant {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String
+  role      UserRole
+  branchId  String?  // null = all branches
+  grantedAt DateTime @default(now())
+  revokedAt DateTime?
+
+  org    Organisation @relation(fields: [orgId], references: [id])
+  user   User         @relation(fields: [userId], references: [id])
+  branch Branch?      @relation(fields: [branchId], references: [id])
+
+  @@unique([orgId, userId, role, branchId])
+}
+
+model Member {
+  id              String   @id @default(cuid())
+  orgId           String
+  externalRef     String?  // admission number
+  name            String
+  status          String   @default("ACTIVE")
+  customFields    Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org         Organisation @relation(fields: [orgId], references: [id])
+  guardians   Guardian[]
+  memberships Membership[]
+  bills       Bill[]
+
+  @@unique([orgId, externalRef])
+}
+
+model Guardian {
+  id       String  @id @default(cuid())
+  memberId String
+  name     String
+  phone    String
+  email    String?
+  verified Boolean @default(false)
+  optOut   Boolean @default(false)
+
+  member Member @relation(fields: [memberId], references: [id])
+}
+
+model Group {
+  id               String           @id @default(cuid())
+  orgId            String
+  branchId         String
+  name             String
+  isActive         Boolean          @default(true)
+  endsAt           DateTime?
+  amountPaise      Int
+  frequency        BillingFrequency @default(MONTHLY)
+  billDayOfMonth   Int?             // null = month-end
+  dueDayOffset     Int              @default(7) // days after issue
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  org         Organisation @relation(fields: [orgId], references: [id])
+  branch      Branch       @relation(fields: [branchId], references: [id])
+  memberships Membership[]
+  reminderPolicies ReminderPolicy[]
+}
+
+model Membership {
+  id          String   @id @default(cuid())
+  memberId    String
+  groupId     String
+  orgId       String
+  joinedAt    DateTime @default(now())
+  leftAt      DateTime?
+  amountPaise Int?     // override
+
+  member Member @relation(fields: [memberId], references: [id])
+  group  Group  @relation(fields: [groupId], references: [id])
+
+  @@unique([memberId, groupId])
+}
+
+model ReminderPolicy {
+  id            String   @id @default(cuid())
+  groupId       String
+  offsetDays    Int      // negative = before due, positive = after
+  sendTimeIST   String   @default("10:00")
+  channels      MessageChannel[]
+  language      String   @default("en")
+  isActive      Boolean  @default(true)
+
+  group Group @relation(fields: [groupId], references: [id])
+}
+
+model Bill {
+  id            String      @id @default(cuid())
+  orgId         String
+  branchId      String
+  memberId      String?
+  groupId       String?
+  membershipId  String?
+  purpose       String
+  amountPaise   Int
+  paidPaise     Int         @default(0)
+  status        BillStatus  @default(ISSUED)
+  dueAt         DateTime?
+  billingPeriod String?     // e.g. "2026-11"
+  isGuest       Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  org         Organisation  @relation(fields: [orgId], references: [id])
+  branch      Branch        @relation(fields: [branchId], references: [id])
+  member      Member?       @relation(fields: [memberId], references: [id])
+  paymentLinks PaymentLink[]
+  allocations  Allocation[]
+  refunds      Refund[]
+  ledgerEntries LedgerEntry[]
+}
+
+model PaymentLink {
+  id            String            @id @default(cuid())
+  billId        String
+  token         String            @unique @default(cuid())
+  status        PaymentLinkStatus @default(ACTIVE)
+  expiresAt     DateTime
+  createdAt     DateTime          @default(now())
+  revokedAt     DateTime?
+
+  bill     Bill             @relation(fields: [billId], references: [id])
+  attempts PaymentAttempt[]
+}
+
+model PaymentAttempt {
+  id              String        @id @default(cuid())
+  linkId          String
+  providerOrderId String        @unique
+  amountPaise     Int
+  status          AttemptStatus @default(PENDING)
+  upiApp          String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  confirmedAt     DateTime?
+  providerRef     String?
+
+  link    PaymentLink @relation(fields: [linkId], references: [id])
+  payment Payment?
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  attemptId   String   @unique
+  orgId       String
+  amountPaise Int
+  providerRef String   @unique
+  confirmedAt DateTime @default(now())
+  receiptNo   String   @unique @default(cuid())
+
+  attempt     PaymentAttempt @relation(fields: [attemptId], references: [id])
+  allocations Allocation[]
+}
+
+model Allocation {
+  id          String   @id @default(cuid())
+  billId      String
+  paymentId   String
+  amountPaise Int
+  createdAt   DateTime @default(now())
+
+  bill    Bill    @relation(fields: [billId], references: [id])
+  payment Payment @relation(fields: [paymentId], references: [id])
+}
+
+model Refund {
+  id              String       @id @default(cuid())
+  billId          String
+  paymentId       String?
+  amountPaise     Int
+  status          RefundStatus @default(REQUESTED)
+  reason          String
+  providerRef     String?
+  idempotencyKey  String       @unique @default(cuid())
+  requestedBy     String
+  approvedBy      String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  bill Bill @relation(fields: [billId], references: [id])
+}
+
+model LedgerEntry {
+  id          String          @id @default(cuid())
+  orgId       String
+  billId      String?
+  type        LedgerEntryType
+  amountPaise Int             // positive = credit, negative = debit
+  currency    String          @default("INR")
+  reference   String
+  postedAt    DateTime        @default(now())
+  reversedBy  String?
+
+  org  Organisation @relation(fields: [orgId], references: [id])
+  bill Bill?        @relation(fields: [billId], references: [id])
+}
+
+model DestinationVersion {
+  id          String          @id @default(cuid())
+  orgId       String
+  type        DestinationType
+  maskedValue String          // last 4 chars visible
+  ifsc        String?
+  verifiedAt  DateTime?
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+
+  org Organisation @relation(fields: [orgId], references: [id])
+  settlementItems SettlementItem[]
+}
+
+model SettlementBatch {
+  id            String                @id @default(cuid())
+  orgId         String
+  reportingDate String               // YYYY-MM-DD
+  status        SettlementBatchStatus @default(SCHEDULED)
+  totalPaise    Int                   @default(0)
+  feePaise      Int                   @default(0)
+  refundPaise   Int                   @default(0)
+  netPaise      Int                   @default(0)
+  runAt         DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  org   Organisation     @relation(fields: [orgId], references: [id])
+  items SettlementItem[]
+
+  @@unique([orgId, reportingDate])
+}
+
+model SettlementItem {
+  id               String               @id @default(cuid())
+  batchId          String
+  orgId            String
+  destinationId    String
+  amountPaise      Int
+  status           SettlementItemStatus @default(PENDING)
+  idempotencyKey   String               @unique @default(cuid())
+  providerRef      String?
+  failureReason    String?
+  submittedAt      DateTime?
+  settledAt        DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  batch       SettlementBatch    @relation(fields: [batchId], references: [id])
+  destination DestinationVersion @relation(fields: [destinationId], references: [id])
+}
+
+model ProviderEvent {
+  id           String   @id @default(cuid())
+  provider     String
+  eventId      String   // provider's unique event ID
+  eventType    String
+  rawPayload   Json
+  processedAt  DateTime?
+  createdAt    DateTime @default(now())
+
+  @@unique([provider, eventId])
+}
+
+model OutboxEvent {
+  id          String   @id @default(cuid())
+  eventType   String
+  payload     Json
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+}
+
+model MessageOccurrence {
+  id          String         @id @default(cuid())
+  billId      String
+  guardianId  String?
+  channel     MessageChannel
+  templateKey String
+  scheduledAt DateTime
+  sentAt      DateTime?
+  status      DeliveryStatus @default(QUEUED)
+  createdAt   DateTime       @default(now())
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  orgId      String?
+  userId     String?
+  action     String
+  entity     String
+  entityId   String?
+  meta       Json     @default("{}")
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+}
