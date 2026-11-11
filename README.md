@@ -5,6 +5,19 @@ UPI checkout via WhatsApp/SMS links and counter QR. Built to the requirements sp
 
 ## Quick start
 
+### 0. Install dependencies and configure local environment
+
+Use Node.js 22 or newer and npm, then run from the repository root:
+
+```sh
+npm ci
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env.local
+```
+
+The example settings connect to the local PostgreSQL container and use fake
+payment and messaging providers. Keep these settings for local development only.
+
 ### 1. Start PostgreSQL
 
 Docker Desktop must be running, then:

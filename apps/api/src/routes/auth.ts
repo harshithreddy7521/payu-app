@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { Err } from "@fee/shared";
+import { requireAuth } from "../middleware/auth.js";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -50,15 +51,8 @@ export async function authRoutes(app: FastifyInstance) {
     });
   });
 
-  app.get("/me", { preHandler: [app.authenticate] }, async (req) => {
+  app.get("/me", { preHandler: [requireAuth] }, async (req) => {
     const user = req.user;
     return { sub: user.sub, orgId: user.orgId, roles: user.roles, branchIds: user.branchIds };
   });
-}
-
-// Register jwt.authenticate decorator
-declare module "fastify" {
-  interface FastifyInstance {
-    authenticate: (req: import("fastify").FastifyRequest, reply: import("fastify").FastifyReply) => Promise<void>;
-  }
 }

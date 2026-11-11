@@ -52,7 +52,9 @@ class FakePaymentProvider implements PaymentProvider {
   }
 }
 
+const fakePaymentProvider = new FakePaymentProvider();
+
 export function getPaymentProvider(): PaymentProvider {
   // ponytail: single adapter, add real Razorpay/Cashfree adapter when provider chosen
-  return new FakePaymentProvider();
+  return fakePaymentProvider;
 }

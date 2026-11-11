@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../lib/prisma.js";
 
@@ -15,7 +16,7 @@ export async function webhookRoutes(app: FastifyInstance) {
     if (existing?.processedAt) return reply.status(200).send({ received: true });
 
     if (!existing) {
-      await prisma.providerEvent.create({ data: { provider, eventId, eventType: (body.eventType as string) ?? "unknown", rawPayload: body } });
+      await prisma.providerEvent.create({ data: { provider, eventId, eventType: (body.eventType as string) ?? "unknown", rawPayload: body as Prisma.InputJsonObject } });
     }
 
     // Process payment success events inline for now (phase 2: move to worker queue)

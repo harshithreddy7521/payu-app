@@ -26,8 +26,8 @@ export async function requireOrgScope(req: FastifyRequest, _reply: FastifyReply)
   if (params.orgId && params.orgId !== user.orgId) throw Err.forbidden("Cross-tenant access denied");
 }
 
-declare module "fastify" {
-  interface FastifyRequest {
+declare module "@fastify/jwt" {
+  interface FastifyJWT {
     user: {
       sub: string;
       orgId: string;
