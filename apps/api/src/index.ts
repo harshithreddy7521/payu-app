@@ -4,6 +4,7 @@ import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
+import { automationRoutes } from "./routes/automation.js";
 import { authRoutes } from "./routes/auth.js";
 import { quickPayRoutes } from "./routes/quickPay.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
@@ -31,6 +32,7 @@ await app.register(swaggerUi, { routePrefix: "/docs" });
 
 app.setErrorHandler(errorHandler);
 
+await app.register(automationRoutes, { prefix: "/v1" });
 await app.register(authRoutes, { prefix: "/v1/auth" });
 await app.register(quickPayRoutes, { prefix: "/v1" });
 await app.register(dashboardRoutes, { prefix: "/v1" });

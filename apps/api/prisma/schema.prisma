@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = "postgresql://postgres:postgres@localhost:5432/india_fee_dev"
+  url      = env("DATABASE_URL")
 }
 
 enum IndustryProfile {
@@ -274,6 +274,8 @@ model Bill {
   org         Organisation  @relation(fields: [orgId], references: [id])
   branch      Branch        @relation(fields: [branchId], references: [id])
   member      Member?       @relation(fields: [memberId], references: [id])
+  @@unique([membershipId, billingPeriod])
+
   paymentLinks PaymentLink[]
   allocations  Allocation[]
   refunds      Refund[]
@@ -443,6 +445,11 @@ model MessageOccurrence {
   guardianId  String?
   channel     MessageChannel
   templateKey String
+  occurrenceKey String @unique
+  language String @default("en")
+  attempts Int @default(0)
+  providerRef String?
+  failureReason String?
   scheduledAt DateTime
   sentAt      DateTime?
   status      DeliveryStatus @default(QUEUED)

@@ -13,20 +13,29 @@ export function getToken(): string | null {
 
 export function getUser(): UserSummary | null {
   if (typeof window === "undefined") return null;
-  try { return JSON.parse(sessionStorage.getItem(USER_KEY) ?? "null"); } catch { return null; }
+  try {
+    return JSON.parse(sessionStorage.getItem(USER_KEY) ?? "null");
+  } catch {
+    return null;
+  }
 }
 
-export async function login(email: string, password: string): Promise<UserSummary> {
+export async function login(
+  email: string,
+  password: string,
+): Promise<UserSummary> {
   const res = await apiFetch<LoginResponse>("/v1/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
+  sessionStorage.removeItem("fee_branch");
   sessionStorage.setItem(TOKEN_KEY, res.token);
   sessionStorage.setItem(USER_KEY, JSON.stringify(res.user));
   return res.user;
 }
 
 export function logout() {
+  sessionStorage.removeItem("fee_branch");
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(USER_KEY);
 }

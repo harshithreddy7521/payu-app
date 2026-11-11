@@ -1,19 +1,46 @@
-// Compute next N bill issue dates for a group (IST)
-export function nextBillDates(group: { frequency: string; billDayOfMonth?: number | null; endsAt?: Date | null }, count: number): string[] {
+const IST = 330 * 60_000;
+export function localDate(now = new Date()): string {
+  return new Date(now.getTime() + IST).toISOString().slice(0, 10);
+}
+export function istInstant(date: string, time = "00:00"): Date {
+  return new Date(`${date}T${time}:00+05:30`);
+}
+export function cycleDate(
+  year: number,
+  month: number,
+  day?: number | null,
+): string {
+  const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(day ? Math.min(day, last) : last).padStart(2, "0")}`;
+}
+export function addDays(date: string, days: number): string {
+  return new Date(Date.parse(date + "T00:00:00Z") + days * 86400_000)
+    .toISOString()
+    .slice(0, 10);
+}
+export function nextBillDates(
+  group: {
+    frequency: string;
+    billDayOfMonth?: number | null;
+    endsAt?: Date | null;
+  },
+  count: number,
+  from = new Date(),
+): string[] {
   if (group.frequency !== "MONTHLY") return [];
-  const now = new Date();
+  const start = localDate(from);
+  let [year, m] = start.split("-").map(Number);
+  let month = m - 1;
   const dates: string[] = [];
-  let year = now.getUTCFullYear();
-  let month = now.getUTCMonth(); // 0-based
-
-  while (dates.length < count) {
+  for (let i = 0; i < count + 2 && dates.length < count; i++) {
+    const date = cycleDate(year, month, group.billDayOfMonth);
+    if (group.endsAt && istInstant(date) > group.endsAt) break;
+    if (istInstant(date) >= from) dates.push(date);
     month++;
-    if (month > 11) { month = 0; year++; }
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const day = group.billDayOfMonth ? Math.min(group.billDayOfMonth, daysInMonth) : daysInMonth;
-    const d = new Date(Date.UTC(year, month, day));
-    if (group.endsAt && d > group.endsAt) break;
-    dates.push(d.toISOString().split("T")[0]);
+    if (month === 12) {
+      month = 0;
+      year++;
+    }
   }
   return dates;
 }

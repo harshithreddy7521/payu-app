@@ -20,10 +20,14 @@ export function requireRoles(...roles: UserRole[]) {
 }
 
 // Inject orgId guard — ensures route params orgId matches JWT claim
-export async function requireOrgScope(req: FastifyRequest, _reply: FastifyReply) {
+export async function requireOrgScope(
+  req: FastifyRequest,
+  _reply: FastifyReply,
+) {
   const user = req.user as { orgId: string };
   const params = req.params as { orgId?: string };
-  if (params.orgId && params.orgId !== user.orgId) throw Err.forbidden("Cross-tenant access denied");
+  if (params.orgId && params.orgId !== user.orgId)
+    throw Err.forbidden("Cross-tenant access denied");
 }
 
 declare module "@fastify/jwt" {
@@ -35,4 +39,23 @@ declare module "@fastify/jwt" {
       branchIds: string[];
     };
   }
+}
+
+export function branchScope(
+  user: { orgId: string; roles: string[]; branchIds: string[] },
+  requested?: string,
+) {
+  const allBranches = user.roles.some((role) =>
+    ["OWNER", "FINANCE"].includes(role),
+  );
+  return {
+    orgId: user.orgId,
+    branchId: requested
+      ? allBranches || user.branchIds.includes(requested)
+        ? requested
+        : "__unavailable__"
+      : allBranches
+        ? undefined
+        : { in: user.branchIds },
+  };
 }

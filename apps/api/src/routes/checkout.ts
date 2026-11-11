@@ -14,9 +14,14 @@ export async function checkoutRoutes(app: FastifyInstance) {
     });
     if (!link) throw Err.notFound("Payment link");
     if (link.expiresAt < new Date() && link.status === "ACTIVE") {
-      await prisma.paymentLink.update({ where: { id: link.id }, data: { status: "EXPIRED" } });
+      await prisma.paymentLink.update({
+        where: { id: link.id },
+        data: { status: "EXPIRED" },
+      });
+      link.status = "EXPIRED";
     }
-    if (link.status === "REVOKED") throw Err.forbidden("Payment link has been revoked");
+    if (link.status === "REVOKED")
+      throw Err.forbidden("Payment link has been revoked");
 
     return {
       token: link.token,
@@ -30,6 +35,30 @@ export async function checkoutRoutes(app: FastifyInstance) {
     };
   });
 
+  app.get("/:token/receipts", async (req) => {
+    const { token } = req.params as { token: string };
+    const link = await prisma.paymentLink.findUnique({
+      where: { token },
+      include: {
+        bill: {
+          include: { org: true, allocations: { include: { payment: true } } },
+        },
+      },
+    });
+    if (!link) throw Err.notFound("Payment link");
+    return {
+      data: link.bill.allocations.map((a) => ({
+        receiptNo: a.payment.receiptNo,
+        amountPaise: a.amountPaise,
+        confirmedAt: a.payment.confirmedAt,
+        merchantName: link.bill.org.name,
+        purpose: link.bill.purpose,
+        maskedReference: `••••${a.payment.providerRef.slice(-6)}`,
+        remainingPaise: link.bill.amountPaise - link.bill.paidPaise,
+      })),
+    };
+  });
+
   // Start checkout — never accept amount or payee from client
   app.post("/:token/checkout", async (req, reply) => {
     const { token } = req.params as { token: string };
@@ -37,11 +66,16 @@ export async function checkoutRoutes(app: FastifyInstance) {
 
     const link = await prisma.paymentLink.findUnique({
       where: { token },
-      include: { bill: { include: { org: true } }, attempts: { where: { status: "PENDING" }, take: 1 } },
+      include: {
+        bill: { include: { org: true } },
+        attempts: { where: { status: "PENDING" }, take: 1 },
+      },
     });
     if (!link) throw Err.notFound("Payment link");
-    if (link.status !== "ACTIVE") throw Err.validation("Payment link is not active");
-    if (link.expiresAt < new Date()) throw Err.validation("Payment link has expired");
+    if (link.status !== "ACTIVE")
+      throw Err.validation("Payment link is not active");
+    if (link.expiresAt < new Date())
+      throw Err.validation("Payment link has expired");
 
     const remaining = link.bill.amountPaise - link.bill.paidPaise;
     if (remaining <= 0) throw Err.validation("Bill is already paid");
@@ -49,7 +83,14 @@ export async function checkoutRoutes(app: FastifyInstance) {
     // Reuse a pending attempt if one exists
     if (link.attempts[0]) {
       const existing = link.attempts[0];
-      return { attemptId: existing.id, providerOrderId: existing.providerOrderId, status: existing.status };
+      const order = await getPaymentProvider().getOrder(
+        existing.providerOrderId,
+      );
+      if (!order)
+        throw Err.conflict(
+          "Pending demo order could not be recovered after a server restart. Create a new request.",
+        );
+      return { ...order, attemptId: existing.id, status: existing.status };
     }
 
     const provider = getPaymentProvider();
@@ -80,7 +121,10 @@ export async function checkoutRoutes(app: FastifyInstance) {
 
   // Poll attempt status (app return / browser polling)
   app.get("/:token/attempt/:attemptId", async (req) => {
-    const { token, attemptId } = req.params as { token: string; attemptId: string };
+    const { token, attemptId } = req.params as {
+      token: string;
+      attemptId: string;
+    };
     const link = await prisma.paymentLink.findUnique({
       where: { token },
       include: { bill: { include: { org: true } } },
@@ -98,9 +142,15 @@ export async function checkoutRoutes(app: FastifyInstance) {
       if (result.status === "SUCCESS" && result.providerRef) {
         // Atomic allocation
         await prisma.$transaction(async (tx) => {
-          const freshBill = await tx.bill.findUnique({ where: { id: link.billId }, select: { amountPaise: true, paidPaise: true, orgId: true } });
+          const freshBill = await tx.bill.findUnique({
+            where: { id: link.billId },
+            select: { amountPaise: true, paidPaise: true, orgId: true },
+          });
           if (!freshBill) return;
-          const allocate = Math.min(result.amountPaise ?? attempt.amountPaise, freshBill.amountPaise - freshBill.paidPaise);
+          const allocate = Math.min(
+            result.amountPaise ?? attempt.amountPaise,
+            freshBill.amountPaise - freshBill.paidPaise,
+          );
           if (allocate <= 0) return;
 
           const payment = await tx.payment.create({
@@ -111,20 +161,54 @@ export async function checkoutRoutes(app: FastifyInstance) {
               providerRef: result.providerRef!,
             },
           });
-          await tx.allocation.create({ data: { billId: link.billId, paymentId: payment.id, amountPaise: allocate } });
+          await tx.allocation.create({
+            data: {
+              billId: link.billId,
+              paymentId: payment.id,
+              amountPaise: allocate,
+            },
+          });
           const newPaid = freshBill.paidPaise + allocate;
-          const newStatus = newPaid >= freshBill.amountPaise ? "PAID" : "PARTIAL";
-          await tx.bill.update({ where: { id: link.billId }, data: { paidPaise: newPaid, status: newStatus } });
-          if (newStatus === "PAID") await tx.paymentLink.update({ where: { id: link.id }, data: { status: "PAID" } });
-          await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { status: "SUCCESS", confirmedAt: new Date(), providerRef: result.providerRef } });
+          const newStatus =
+            newPaid >= freshBill.amountPaise ? "PAID" : "PARTIAL";
+          await tx.bill.update({
+            where: { id: link.billId },
+            data: { paidPaise: newPaid, status: newStatus },
+          });
+          if (newStatus === "PAID")
+            await tx.paymentLink.update({
+              where: { id: link.id },
+              data: { status: "PAID" },
+            });
+          await tx.paymentAttempt.update({
+            where: { id: attempt.id },
+            data: {
+              status: "SUCCESS",
+              confirmedAt: new Date(),
+              providerRef: result.providerRef,
+            },
+          });
           await tx.ledgerEntry.create({
-            data: { orgId: freshBill.orgId, billId: link.billId, type: "PAYMENT", amountPaise: allocate, reference: result.providerRef! },
+            data: {
+              orgId: freshBill.orgId,
+              billId: link.billId,
+              type: "PAYMENT",
+              amountPaise: allocate,
+              reference: result.providerRef!,
+            },
           });
         });
-        return { status: "SUCCESS", providerRef: result.providerRef, receiptNo: attempt.id };
+        return {
+          status: "SUCCESS",
+          providerRef: result.providerRef,
+          receiptNo: attempt.id,
+        };
       }
       if (result.status === "FAILED") {
-        await prisma.paymentAttempt.update({ where: { id: attempt.id }, data: { status: "FAILED" } });
+        await prisma.paymentAttempt.update({
+          where: { id: attempt.id },
+          data: { status: "FAILED" },
+        });
         return { status: "FAILED" };
       }
     }

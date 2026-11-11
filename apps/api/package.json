@@ -7,7 +7,9 @@
     "build": "tsc",
     "db:push": "prisma db push",
     "db:seed": "tsx src/lib/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "worker": "tsx src/worker.ts",
+    "test": "tsx --test src/lib/*.test.ts"
   },
   "dependencies": {
     "@fee/shared": "*",

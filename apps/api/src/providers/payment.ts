@@ -14,22 +14,64 @@ export interface ProviderPaymentResult {
 }
 
 export interface PaymentProvider {
-  createOrder(params: { amountPaise: number; merchantOrderRef: string; description: string }): Promise<ProviderOrder>;
+  createOrder(params: {
+    amountPaise: number;
+    merchantOrderRef: string;
+    description: string;
+  }): Promise<ProviderOrder>;
+  getOrder(providerOrderId: string): Promise<ProviderOrder | null>;
   verifyPayment(providerOrderId: string): Promise<ProviderPaymentResult>;
-  refund(params: { providerRef: string; amountPaise: number; idempotencyKey: string; reason: string }): Promise<{ refundRef: string }>;
-  settle(params: { amountPaise: number; destinationVpa?: string; ifsc?: string; accountNo?: string; idempotencyKey: string }): Promise<{ ref: string }>;
+  refund(params: {
+    providerRef: string;
+    amountPaise: number;
+    idempotencyKey: string;
+    reason: string;
+  }): Promise<{ refundRef: string }>;
+  settle(params: {
+    amountPaise: number;
+    destinationVpa?: string;
+    ifsc?: string;
+    accountNo?: string;
+    idempotencyKey: string;
+  }): Promise<{ ref: string }>;
 }
 
 // Deterministic fake that auto-confirms after 2s (simulated via flag)
 class FakePaymentProvider implements PaymentProvider {
-  private pendingOrders = new Map<string, { amountPaise: number; createdAt: number }>();
+  private pendingOrders = new Map<
+    string,
+    { amountPaise: number; createdAt: number; description: string }
+  >();
 
-  async createOrder({ amountPaise, merchantOrderRef, description }: { amountPaise: number; merchantOrderRef: string; description: string }): Promise<ProviderOrder> {
+  async createOrder({
+    amountPaise,
+    merchantOrderRef,
+    description,
+  }: {
+    amountPaise: number;
+    merchantOrderRef: string;
+    description: string;
+  }): Promise<ProviderOrder> {
     const providerOrderId = `fake_order_${merchantOrderRef}_${Date.now()}`;
-    this.pendingOrders.set(providerOrderId, { amountPaise, createdAt: Date.now() });
+    this.pendingOrders.set(providerOrderId, {
+      amountPaise,
+      createdAt: Date.now(),
+      description,
+    });
     const upiIntentUrl = `upi://pay?pa=fake@fakebank&pn=FeeApp&am=${(amountPaise / 100).toFixed(2)}&tn=${encodeURIComponent(description)}&tr=${providerOrderId}`;
     const qrCodeDataUrl = await QRCode.toDataURL(upiIntentUrl);
     return { providerOrderId, upiIntentUrl, qrCodeDataUrl };
+  }
+
+  async getOrder(providerOrderId: string): Promise<ProviderOrder | null> {
+    const order = this.pendingOrders.get(providerOrderId);
+    if (!order) return null;
+    const upiIntentUrl = `upi://pay?pa=fake@fakebank&pn=FeeApp&am=${(order.amountPaise / 100).toFixed(2)}&tn=${encodeURIComponent(order.description)}&tr=${providerOrderId}`;
+    return {
+      providerOrderId,
+      upiIntentUrl,
+      qrCodeDataUrl: await QRCode.toDataURL(upiIntentUrl),
+    };
   }
 
   async verifyPayment(providerOrderId: string): Promise<ProviderPaymentResult> {
@@ -38,16 +80,35 @@ class FakePaymentProvider implements PaymentProvider {
     // Auto-succeed after 3 seconds for demo
     if (Date.now() - order.createdAt > 3000) {
       this.pendingOrders.delete(providerOrderId);
-      return { status: "SUCCESS", providerRef: `fake_pay_${randomUUID()}`, amountPaise: order.amountPaise };
+      return {
+        status: "SUCCESS",
+        providerRef: `fake_pay_${randomUUID()}`,
+        amountPaise: order.amountPaise,
+      };
     }
     return { status: "PENDING" };
   }
 
-  async refund({ idempotencyKey }: { providerRef: string; amountPaise: number; idempotencyKey: string; reason: string }): Promise<{ refundRef: string }> {
+  async refund({
+    idempotencyKey,
+  }: {
+    providerRef: string;
+    amountPaise: number;
+    idempotencyKey: string;
+    reason: string;
+  }): Promise<{ refundRef: string }> {
     return { refundRef: `fake_refund_${idempotencyKey}` };
   }
 
-  async settle({ idempotencyKey }: { amountPaise: number; destinationVpa?: string; ifsc?: string; accountNo?: string; idempotencyKey: string }): Promise<{ ref: string }> {
+  async settle({
+    idempotencyKey,
+  }: {
+    amountPaise: number;
+    destinationVpa?: string;
+    ifsc?: string;
+    accountNo?: string;
+    idempotencyKey: string;
+  }): Promise<{ ref: string }> {
     return { ref: `fake_settle_${idempotencyKey}` };
   }
 }
@@ -56,5 +117,7 @@ const fakePaymentProvider = new FakePaymentProvider();
 
 export function getPaymentProvider(): PaymentProvider {
   // ponytail: single adapter, add real Razorpay/Cashfree adapter when provider chosen
+  if (process.env.PAYMENT_PROVIDER && process.env.PAYMENT_PROVIDER !== "fake")
+    throw new Error("Only the fake payment provider is configured");
   return fakePaymentProvider;
 }

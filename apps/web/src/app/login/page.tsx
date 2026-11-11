@@ -2,56 +2,127 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { login } from "@/lib/auth";
-
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function handleSubmit(e: React.FormEvent) {
+  const [email, setEmail] = useState(""),
+    [password, setPassword] = useState(""),
+    [error, setError] = useState(""),
+    [loading, setLoading] = useState(false);
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
       await login(email, password);
       router.push("/app/quick-pay");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Login failed");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to sign in");
     } finally {
       setLoading(false);
     }
   }
-
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)" }}>
-      <div className="card form-card" style={{ width: "100%", maxWidth: 400 }}>
-        <div className="form-title">
-          <span style={{ color: "var(--primary)", fontWeight: 800 }}>FeeApp</span>
-          <div style={{ fontSize: 14, fontWeight: 400, color: "var(--text-muted)", marginTop: 4 }}>Sign in to your account</div>
+    <main className="login-screen">
+      <section className="login-story">
+        <div className="brand">
+          <span className="brand-mark">
+            f<span>•</span>
+          </span>
+          fee<span className="brand-light">flow</span>
         </div>
-        <form onSubmit={handleSubmit}>
-          <div className="field">
-            <label className="label" htmlFor="email">Email</label>
-            <input id="email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
-          </div>
-          <div className="field">
-            <label className="label" htmlFor="password">Password</label>
-            <input id="password" className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-          </div>
-          {error && <p className="error-msg" style={{ marginBottom: 12 }}>{error}</p>}
-          <button className="btn btn-primary" type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center" }}>
-            {loading ? <span className="spinner" /> : "Sign in"}
-          </button>
-        </form>
-        <div style={{ marginTop: 20, fontSize: 12, color: "var(--text-muted)", borderTop: "1px solid var(--border)", paddingTop: 16 }}>
-          <strong>Demo logins:</strong><br />
-          school.owner@demo.com / Demo1234!<br />
-          sports.owner@demo.com / Demo1234!<br />
-          restaurant.owner@demo.com / Demo1234!
+        <h1>
+          Less chasing.
+          <br />
+          More <em>growing.</em>
+        </h1>
+        <p>
+          Thoughtful fee collection for the schools, academies, and businesses
+          moving India forward.
+        </p>
+        <img
+          src="/collection-art.svg"
+          alt="Illustrated payment receipt surrounded by greenery"
+        />
+        <div className="login-story-footer">
+          Built around your people. Designed for your peace of mind.
         </div>
-      </div>
-    </div>
+      </section>
+      <section className="login-form-panel">
+        <div>
+          <p className="eyebrow">YOUR DAY, A LITTLE SIMPLER</p>
+          <h2>Welcome back.</h2>
+          <p className="intro">
+            Sign in to your workspace and keep things flowing.
+          </p>
+          <form onSubmit={submit}>
+            <div className="field">
+              <label className="label" htmlFor="email">
+                Work email
+              </label>
+              <input
+                id="email"
+                className="input"
+                type="email"
+                placeholder="you@organisation.com"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div className="field">
+              <label className="label" htmlFor="password">
+                Password
+              </label>
+              <input
+                id="password"
+                className="input"
+                type="password"
+                placeholder="Enter your password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            {error && (
+              <p className="error-msg" role="alert">
+                {error}
+              </p>
+            )}
+            <button
+              className="btn btn-primary"
+              style={{ width: "100%" }}
+              disabled={loading}
+            >
+              {loading ? "Signing in…" : "Sign in to workspace →"}
+            </button>
+          </form>
+          <div className="demo-logins">
+            <strong>Take a look around</strong>
+            <p style={{ marginTop: 6 }}>
+              Explore a demo workspace. No real payments.
+            </p>
+            {[
+              ["school", "School & education"],
+              ["sports", "Sports academy"],
+              ["restaurant", "Restaurant"],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                className="demo-login-button"
+                onClick={() => {
+                  setEmail(`${id}.owner@demo.com`);
+                  setPassword("Demo1234!");
+                }}
+              >
+                {label}
+                <span>Try demo ↗</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+    </main>
   );
 }

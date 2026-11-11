@@ -1,4 +1,4 @@
-# India Fee Collection App — Phase 1
+# Feeflow — India Fee Collection App
 
 Multi-tenant fee collection platform for schools, sports academies and restaurants.
 UPI checkout via WhatsApp/SMS links and counter QR. Built to the requirements spec v1.0.
@@ -34,9 +34,9 @@ npm run db:push
 npm run db:seed
 ```
 
-### 3. Run API + Web
+### 3. Run API + Web + Worker
 
-Two terminals:
+Three terminals:
 
 ```
 # Terminal 1 — API (port 3001)
@@ -44,6 +44,9 @@ cd apps/api && npm run dev
 
 # Terminal 2 — Web (port 3000)
 cd apps/web && npm run dev
+
+# Terminal 3 — Recurring billing and reminder worker
+cd apps/api && npm run worker
 ```
 
 Open http://localhost:3000
@@ -75,7 +78,8 @@ india-fee-app/
 **Quick Pay** — POST /v1/quick-pay → returns bill + payment link token
 **Checkout** — GET /pay/:token (payer) → POST /pay/:token/checkout → polls /pay/:token/attempt/:id
 **Webhooks** — POST /v1/webhooks/fake → idempotent event processing → allocation
-**Settlement** — GET /v1/settlements (Phase 4: daily worker at 02:00 IST)
+**Recurring billing** — separate `npm run worker` process, monthly cycles and durable reminder queue
+**Settlement** — GET /v1/settlements (daily settlement worker remains Phase 3 work)
 
 ### Provider adapters
 
@@ -88,9 +92,40 @@ Swap in Razorpay/Cashfree/Juspay + WhatsApp Business API + DLT-registered SMS be
 | Phase                                                 | Status          |
 | ----------------------------------------------------- | --------------- |
 | 1 — Scaffold, auth, roles, Quick Pay, fake providers | ✅ This release |
-| 2 — Members, groups, recurring billing, reminders    | Planned         |
+| 2 — Members, groups, recurring billing, reminders    | Core local workflows implemented; remaining scope below |
 | 3 — Verified destinations, refunds, daily settlement | Planned         |
 | 4 — Sandbox providers, device matrix, go-live        | Planned         |
+
+## Existing Phase 1 database upgrade
+
+Back up your database first. The additive upgrade backfills legacy reminder keys
+and adds uniqueness constraints without deleting rows. It deliberately fails if
+existing membership/period bills are duplicated; resolve those records first.
+
+```sh
+cd apps/api
+npx prisma db execute --file prisma/upgrades/phase2.sql --schema prisma/schema.prisma
+npm run db:push
+```
+
+Fresh databases only need the quick-start `db:push` command.
+
+## Try the new workflows
+
+- **Members:** create a member or import a CSV with headers
+  `name,externalRef,guardianName,phone`. Preview all row errors before confirming.
+- **Groups & billing:** create a monthly group, preview three cycles, add members
+  and optionally override their monthly amount. Edit reminders or pause billing
+  from the group detail screen. New enrollments start at the next eligible cycle.
+- **Reminders:** inspect queue state and delivery outcomes. Keep the worker
+  running; the owner’s “Check eligible billing” action catches up the current
+  eligible cycle. It never creates bills before their issue date.
+- **Transactions:** export the visible rows. Payers can print confirmed receipts.
+
+Fake adapters stay enabled for the demo. Real settlement, verification,
+production messaging and provider integrations are still later-stage work.
+See [implementation progress](docs/implementation-progress.md) for delivered
+features, tests and the remaining specification requirements.
 
 ## Mobile (Expo)
 
