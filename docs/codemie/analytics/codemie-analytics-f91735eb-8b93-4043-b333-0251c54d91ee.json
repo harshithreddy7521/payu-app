@@ -1,0 +1,197 @@
+{
+  "meta": {
+    "generatedAt": "2026-11-11T05:35:28.378Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 69358,
+      "turns": 4,
+      "files": 3,
+      "netLines": 0,
+      "toolCallsTotal": 4,
+      "toolSuccessRate": 75,
+      "totalCostUSD": 0.19029558000000002,
+      "cacheReadCostUSD": 0.04585967999999999,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "estimatedModels": [],
+    "localModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "periodStart": "2026-11-11T05:34:15.672Z",
+    "periodEnd": "2026-11-11T05:35:25.030Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "f91735eb-8b93-4043-b333-0251c54d91ee",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "claude --resume 4518fa3f-72f6-4eb1-ae21-fb4b2003505e",
+      "project": "C:\\Users\\HarshithKumarReddyBu\\Desktop\\learning\\india-fee-app",
+      "branch": "HEAD",
+      "startTime": 1794375255672,
+      "durationMs": 69358,
+      "turns": 4,
+      "fileOps": 3,
+      "linesAdded": 0,
+      "linesRemoved": 0,
+      "linesModified": 0,
+      "netLines": 0,
+      "filesChanged": 0,
+      "filesWritten": 0,
+      "filesEdited": 0,
+      "toolCallsTotal": 4,
+      "toolCallsSuccess": 3,
+      "toolCallsFailure": 1,
+      "models": [
+        "claude-sonnet-4-6"
+      ],
+      "languages": [
+        "typescript"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 3,
+          "successCount": 2,
+          "failureCount": 1,
+          "successRate": 66.66666666666666
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 6,
+        "output": 754,
+        "cacheRead": 148580,
+        "cacheCreation": 21947,
+        "cacheCreation1h": 21947,
+        "total": 171287
+      },
+      "costUSD": 0.19029558000000002,
+      "cacheReadCostUSD": 0.04585967999999999,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 5,
+            "output": 624,
+            "cacheRead": 105724,
+            "cacheCreation": 19896,
+            "cacheCreation1h": 19896,
+            "total": 126249
+          },
+          "costUSD": 0.1604682,
+          "unpriced": false
+        },
+        {
+          "model": "claude-sonnet-4-6",
+          "tokens": {
+            "input": 1,
+            "output": 130,
+            "cacheRead": 42856,
+            "cacheCreation": 2051,
+            "cacheCreation1h": 2051,
+            "total": 45038
+          },
+          "costUSD": 0.02982738,
+          "unpriced": false
+        }
+      ],
+      "hadLog": true,
+      "agentSessionFile": "C:\\Users\\HarshithKumarReddyBu\\.claude\\projects\\C--Users-HarshithKumarReddyBu-Desktop-learning-india-fee-app\\592810e1-55ae-4b48-a5d1-ea3a5faa6fee.jsonl",
+      "costSeries": [
+        {
+          "t": 1794375270589,
+          "cost": 0.119913,
+          "tokens": 41466
+        },
+        {
+          "t": 1794375272261,
+          "cost": 0.1354053,
+          "tokens": 83085
+        },
+        {
+          "t": 1794375279827,
+          "cost": 0.1604682,
+          "tokens": 126249
+        },
+        {
+          "t": 1794375283050,
+          "cost": 0.19029558000000002,
+          "tokens": 171287
+        }
+      ],
+      "costSource": "native-estimate",
+      "costBasis": "standard-api-tokens",
+      "dispatchesComplete": true,
+      "rootOwnCostUSD": 0.187584,
+      "unlinkedCostUSD": 0,
+      "unlinkedAgentIds": [],
+      "observedEnd": 1794375325030,
+      "rootOwnTokens": {
+        "input": 6,
+        "output": 754,
+        "cacheRead": 148580,
+        "cacheCreation": 21947,
+        "cacheCreation1h": 21947,
+        "total": 171287
+      },
+      "unlinkedTokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreation": 0,
+        "cacheCreation1h": 0,
+        "total": 0
+      },
+      "modelTimeline": [
+        {
+          "t": 1794375270589,
+          "model": "claude-sonnet-4-6",
+          "costUSD": 0.119913,
+          "tokens": 41466
+        },
+        {
+          "t": 1794375272261,
+          "model": "claude-sonnet-4-6",
+          "costUSD": 0.0154923,
+          "tokens": 41619
+        },
+        {
+          "t": 1794375279827,
+          "model": "claude-sonnet-4-6",
+          "costUSD": 0.0250629,
+          "tokens": 43164
+        },
+        {
+          "t": 1794375283050,
+          "model": "claude-sonnet-4-6",
+          "costUSD": 0.02982738,
+          "tokens": 45038
+        }
+      ],
+      "routedTurnsPct": 0,
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "india-fee-app",
+  "private": true,
+  "version": "0.0.1",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "db:push": "turbo run db:push --filter=api",
+    "db:seed": "turbo run db:seed --filter=api",
+    "db:studio": "cd apps/api && npx prisma studio"
+  },
+  "packageManager": "npm@11.12.1",
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3"
+  }
+}
