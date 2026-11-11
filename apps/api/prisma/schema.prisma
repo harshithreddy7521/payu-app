@@ -4,23 +4,113 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = "postgresql://postgres:postgres@localhost:5432/india_fee_dev"
 }
 
-enum IndustryProfile { SCHOOL SPORTS RESTAURANT }
-enum OrgStatus { DRAFT UNDER_REVIEW ACTION_REQUIRED ACTIVE RESTRICTED }
-enum UserRole { OWNER FINANCE BRANCH_MANAGER COLLECTOR SUPPORT }
-enum BillStatus { DRAFT ISSUED PARTIAL PAID CANCELLED EXPIRED }
-enum PaymentLinkStatus { ACTIVE EXPIRED REVOKED PAID }
-enum AttemptStatus { PENDING SUCCESS FAILED EXPIRED UNKNOWN }
-enum RefundStatus { REQUESTED SUBMITTED SUCCEEDED FAILED }
-enum SettlementBatchStatus { SCHEDULED RUNNING COMPLETED FAILED }
-enum SettlementItemStatus { PENDING SUBMITTED SETTLED FAILED HELD RETURNED UNKNOWN }
-enum LedgerEntryType { PAYMENT REFUND FEE SETTLEMENT HOLD HOLD_RELEASE ADJUSTMENT }
-enum MessageChannel { WHATSAPP SMS EMAIL }
-enum DeliveryStatus { QUEUED SUBMITTED DELIVERED FAILED SUPPRESSED UNKNOWN }
-enum BillingFrequency { ONE_TIME MONTHLY }
-enum DestinationType { BANK_ACCOUNT UPI_VPA }
+enum IndustryProfile {
+  SCHOOL
+  SPORTS
+  RESTAURANT
+}
+
+enum OrgStatus {
+  DRAFT
+  UNDER_REVIEW
+  ACTION_REQUIRED
+  ACTIVE
+  RESTRICTED
+}
+
+enum UserRole {
+  OWNER
+  FINANCE
+  BRANCH_MANAGER
+  COLLECTOR
+  SUPPORT
+}
+
+enum BillStatus {
+  DRAFT
+  ISSUED
+  PARTIAL
+  PAID
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentLinkStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  PAID
+}
+
+enum AttemptStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  EXPIRED
+  UNKNOWN
+}
+
+enum RefundStatus {
+  REQUESTED
+  SUBMITTED
+  SUCCEEDED
+  FAILED
+}
+
+enum SettlementBatchStatus {
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum SettlementItemStatus {
+  PENDING
+  SUBMITTED
+  SETTLED
+  FAILED
+  HELD
+  RETURNED
+  UNKNOWN
+}
+
+enum LedgerEntryType {
+  PAYMENT
+  REFUND
+  FEE
+  SETTLEMENT
+  HOLD
+  HOLD_RELEASE
+  ADJUSTMENT
+}
+
+enum MessageChannel {
+  WHATSAPP
+  SMS
+  EMAIL
+}
+
+enum DeliveryStatus {
+  QUEUED
+  SUBMITTED
+  DELIVERED
+  FAILED
+  SUPPRESSED
+  UNKNOWN
+}
+
+enum BillingFrequency {
+  ONE_TIME
+  MONTHLY
+}
+
+enum DestinationType {
+  BANK_ACCOUNT
+  UPI_VPA
+}
 
 model Organisation {
   id        String          @id @default(cuid())

@@ -2,6 +2,19 @@ import "dotenv/config";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma.js";
 
+// Prisma's compound-unique `where` doesn't accept null for branchId,
+// so we use findFirst + create for "all branches" (branchId = null) grants.
+async function ensureOwnerGrant(orgId: string, userId: string) {
+  const existing = await prisma.roleGrant.findFirst({
+    where: { orgId, userId, role: "OWNER", branchId: null },
+  });
+  if (!existing) {
+    await prisma.roleGrant.create({
+      data: { orgId, userId, role: "OWNER" },
+    });
+  }
+}
+
 async function main() {
   console.log("Seeding demo data...");
 
@@ -23,34 +36,58 @@ async function main() {
     create: { orgId: school.id, email: "school.owner@demo.com", passwordHash: hash, name: "Priya Sharma" },
     update: {},
   });
-  await prisma.roleGrant.upsert({
-    where: { orgId_userId_role_branchId: { orgId: school.id, userId: schoolOwner.id, role: "OWNER", branchId: null } },
-    create: { orgId: school.id, userId: schoolOwner.id, role: "OWNER" },
-    update: {},
-  });
-  // Add two siblings with same guardian phone (AT-03)
+  await ensureOwnerGrant(school.id, schoolOwner.id);
+
+  // Two siblings with the same guardian phone (AT-03)
   const memberA = await prisma.member.upsert({
     where: { orgId_externalRef: { orgId: school.id, externalRef: "STU-001" } },
-    create: { orgId: school.id, name: "Arjun Sharma", externalRef: "STU-001", guardians: { create: [{ name: "Ravi Sharma", phone: "9876543210" }] } },
+    create: {
+      orgId: school.id,
+      name: "Arjun Sharma",
+      externalRef: "STU-001",
+      guardians: { create: [{ name: "Ravi Sharma", phone: "9876543210" }] },
+    },
     update: {},
   });
   const memberB = await prisma.member.upsert({
     where: { orgId_externalRef: { orgId: school.id, externalRef: "STU-002" } },
-    create: { orgId: school.id, name: "Priya Sharma", externalRef: "STU-002", guardians: { create: [{ name: "Ravi Sharma", phone: "9876543210" }] } },
+    create: {
+      orgId: school.id,
+      name: "Priya Sharma",
+      externalRef: "STU-002",
+      guardians: { create: [{ name: "Ravi Sharma", phone: "9876543210" }] },
+    },
     update: {},
   });
   const tuitionGroup = await prisma.group.upsert({
     where: { id: "school-class-6" },
-    create: { id: "school-class-6", orgId: school.id, branchId: schoolBranch.id, name: "Class 6 Tuition", amountPaise: 400000, frequency: "MONTHLY", billDayOfMonth: 1, dueDayOffset: 7 },
+    create: {
+      id: "school-class-6",
+      orgId: school.id,
+      branchId: schoolBranch.id,
+      name: "Class 6 Tuition",
+      amountPaise: 400000,
+      frequency: "MONTHLY",
+      billDayOfMonth: 1,
+      dueDayOffset: 7,
+    },
     update: {},
   });
+  for (const m of [memberA, memberB]) {
+    await prisma.membership.upsert({
+      where: { memberId_groupId: { memberId: m.id, groupId: tuitionGroup.id } },
+      create: { memberId: m.id, groupId: tuitionGroup.id, orgId: school.id },
+      update: {},
+    });
+  }
+
   // --- SPORTS ---
   const sports = await prisma.organisation.upsert({
     where: { id: "demo-sports" },
     create: { id: "demo-sports", name: "Champion Cricket Academy", profile: "SPORTS", status: "ACTIVE" },
     update: {},
   });
-  const sportsBranch = await prisma.branch.upsert({
+  await prisma.branch.upsert({
     where: { id: "sports-main" },
     create: { id: "sports-main", orgId: sports.id, name: "Academy Ground" },
     update: {},
@@ -60,11 +97,7 @@ async function main() {
     create: { orgId: sports.id, email: "sports.owner@demo.com", passwordHash: hash, name: "Rahul Verma" },
     update: {},
   });
-  await prisma.roleGrant.upsert({
-    where: { orgId_userId_role_branchId: { orgId: sports.id, userId: sportsOwner.id, role: "OWNER", branchId: null } },
-    create: { orgId: sports.id, userId: sportsOwner.id, role: "OWNER" },
-    update: {},
-  });
+  await ensureOwnerGrant(sports.id, sportsOwner.id);
 
   // --- RESTAURANT ---
   const restaurant = await prisma.organisation.upsert({
@@ -82,18 +115,19 @@ async function main() {
     create: { orgId: restaurant.id, email: "restaurant.owner@demo.com", passwordHash: hash, name: "Meena Patel" },
     update: {},
   });
-  await prisma.roleGrant.upsert({
-    where: { orgId_userId_role_branchId: { orgId: restaurant.id, userId: restOwner.id, role: "OWNER", branchId: null } },
-    create: { orgId: restaurant.id, userId: restOwner.id, role: "OWNER" },
-    update: {},
-  });
+  await ensureOwnerGrant(restaurant.id, restOwner.id);
 
-  // Create a sample Quick Pay bill for restaurant (counter QR demo)
+  // Sample Quick Pay bill for restaurant (counter QR demo)
   await prisma.bill.upsert({
     where: { id: "demo-rest-bill-1" },
     create: {
-      id: "demo-rest-bill-1", orgId: restaurant.id, branchId: restBranch.id,
-      purpose: "Table 4 Order #42", amountPaise: 85000, isGuest: true, status: "ISSUED",
+      id: "demo-rest-bill-1",
+      orgId: restaurant.id,
+      branchId: restBranch.id,
+      purpose: "Table 4 Order #42",
+      amountPaise: 85000,
+      isGuest: true,
+      status: "ISSUED",
       dueAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       paymentLinks: { create: [{ expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) }] },
     },
@@ -107,4 +141,9 @@ async function main() {
   console.log("\nDone.");
 }
 
-main().catch(console.error).finally(() => prisma.$disconnect());
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(() => prisma.$disconnect());
