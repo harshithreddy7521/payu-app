@@ -101,7 +101,7 @@ export default function LoginPage() {
           <div className="demo-logins">
             <strong>Take a look around</strong>
             <p style={{ marginTop: 6 }}>
-              Explore a demo workspace. No real payments.
+              Explore a sample workspace. UPI links use the configured recipient.
             </p>
             {[
               ["school", "School & education"],

@@ -1,3 +1,4 @@
+import { ManualUpiProvider } from "./manualUpi.js";
 import { randomUUID } from "crypto";
 import QRCode from "qrcode";
 
@@ -113,11 +114,14 @@ class FakePaymentProvider implements PaymentProvider {
   }
 }
 
+const manualUpiProvider = new ManualUpiProvider();
+
+export function paymentMode() { return process.env.PAYMENT_PROVIDER ?? "manual-upi"; }
+
 const fakePaymentProvider = new FakePaymentProvider();
 
 export function getPaymentProvider(): PaymentProvider {
-  // ponytail: single adapter, add real Razorpay/Cashfree adapter when provider chosen
-  if (process.env.PAYMENT_PROVIDER && process.env.PAYMENT_PROVIDER !== "fake")
-    throw new Error("Only the fake payment provider is configured");
-  return fakePaymentProvider;
+  if (paymentMode() === "manual-upi") return manualUpiProvider;
+  if (paymentMode() === "fake") return fakePaymentProvider;
+  throw new Error("The requested payment provider is not configured");
 }

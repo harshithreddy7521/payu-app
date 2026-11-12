@@ -1,11 +1,13 @@
 import type { Prisma } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
+import { paymentMode } from "../providers/payment.js";
 import { prisma } from "../lib/prisma.js";
 
 // Webhook ingestion: persist first, acknowledge, process async
 export async function webhookRoutes(app: FastifyInstance) {
   app.post("/:provider", async (req, reply) => {
     const { provider } = req.params as { provider: string };
+    if (paymentMode() !== "fake" || provider !== "fake") return reply.code(403).send({ message: "Demo webhooks are disabled for direct UPI payments" });
     const body = req.body as Record<string, unknown>;
 
     // Extract provider event ID (fake provider uses body.eventId)

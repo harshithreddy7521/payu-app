@@ -19,14 +19,14 @@ type PollStatus = "IDLE" | "PENDING" | "SUCCESS" | "FAILED";
 export default function CheckoutPage() {
   const { token } = useParams<{ token: string }>();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [ctx, setCtx] = useState<CheckoutContext | null>(null);
+  const [ctx, setCtx] = useState<(CheckoutContext & {paymentMode?:string;payeeVpa?:string}) | null>(null);
   const [attempt, setAttempt] = useState<CheckoutResponse | null>(null);
   const [pollStatus, setPollStatus] = useState<PollStatus>("IDLE");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiFetch<CheckoutContext>(`/pay/${token}`)
+    apiFetch<CheckoutContext & {paymentMode?:string;payeeVpa?:string}>(`/pay/${token}`)
       .then(setCtx)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -49,8 +49,8 @@ export default function CheckoutPage() {
         body: JSON.stringify({}),
       });
       setAttempt(res);
-      // Poll for confirmation
-      pollAttempt(res.attemptId);
+      // Direct UPI has no automatic bank verification.
+      if (ctx.paymentMode !== "manual-upi") pollAttempt(res.attemptId);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to start payment");
       setPollStatus("IDLE");
@@ -248,7 +248,7 @@ export default function CheckoutPage() {
                 marginBottom: 16,
               }}
             >
-              Scan with any UPI app · waiting for confirmation…
+              {ctx.paymentMode === "manual-upi" ? "Pay in your UPI app. Status stays pending until payment is verified." : "Scan with any UPI app · waiting for confirmation…"}
             </div>
             {attempt.upiIntentUrl && (
               <a
@@ -300,7 +300,7 @@ export default function CheckoutPage() {
             textAlign: "center",
           }}
         >
-          Feeflow demo checkout · No real funds move
+          {ctx.paymentMode === "manual-upi" ? `Paying ${ctx.payeeVpa}. Confirm the recipient name in your UPI app. Real money will be transferred; automatic confirmation is not connected.` : "Feeflow demo checkout · No real funds move"}
         </div>
       </div>
     </div>

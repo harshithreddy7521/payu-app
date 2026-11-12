@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { getPaymentProvider } from "../providers/payment.js";
+import { manualUpiPayee } from "../providers/manualUpi.js";
+import { getPaymentProvider, paymentMode } from "../providers/payment.js";
 import { Err } from "@fee/shared";
 
 export async function checkoutRoutes(app: FastifyInstance) {
@@ -25,6 +26,8 @@ export async function checkoutRoutes(app: FastifyInstance) {
 
     return {
       token: link.token,
+      paymentMode: paymentMode(),
+      payeeVpa: paymentMode() === "manual-upi" ? manualUpiPayee() : undefined,
       merchantName: link.bill.org.name,
       purpose: link.bill.purpose,
       amountPaise: link.bill.amountPaise,

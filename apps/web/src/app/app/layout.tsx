@@ -145,7 +145,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               ))}
             </select>
             <span className="demo-indicator">
-              <i /> Demo environment
+              <i /> Development workspace
             </span>
             <span className="user-avatar small">{user.name.slice(0, 1)}</span>
           </div>

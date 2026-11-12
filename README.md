@@ -15,8 +15,8 @@ cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-The example settings connect to the local PostgreSQL container and use fake
-payment and messaging providers. Keep these settings for local development only.
+The example settings connect to the local PostgreSQL container and use direct
+UPI payment links with a fake messaging provider. Keep these settings for local development only.
 
 ### 1. Start PostgreSQL
 
@@ -135,3 +135,22 @@ npm run dev        # starts Expo dev server
 npm run android    # requires Android emulator
 npm run ios        # requires macOS + Xcode
 ```
+
+## Temporary direct UPI collection
+
+`PAYMENT_PROVIDER=manual-upi` is now the default and uses `7090832433@ybl`.
+Change `UPI_PAYEE_VPA` in `apps/api/.env` when the company VPA is ready.
+`UPI_PAYEE_NAME` is a display hint; payers should confirm the bank-resolved name
+in their UPI app. Generated QR codes and `upi://pay` links include the exact INR
+amount and note. These can transfer real money.
+
+Direct UPI has no bank confirmation feed: attempts stay pending, demo webhooks
+are disabled, and no confirmed receipt, refund or settlement is fabricated.
+Automatic verification requires a real payment-provider integration. Set
+`PAYMENT_PROVIDER=fake` explicitly only for simulated auto-confirming payments.
+
+A `localhost:3000/pay/...` web link is only reachable on the machine hosting the
+app. To share web checkout with another phone, run the web/API on reachable
+HTTPS addresses and set `WEB_URL` and `NEXT_PUBLIC_API_URL` accordingly. The QR
+and Open UPI app action directly encode the UPI payment, independently of that
+web host.

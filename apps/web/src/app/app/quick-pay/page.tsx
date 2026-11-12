@@ -18,7 +18,7 @@ export default function QuickPayPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<
-    (QuickPayResponse & { qrCodeDataUrl?: string }) | null
+    (QuickPayResponse & { qrCodeDataUrl?: string; upiIntentUrl?: string }) | null
   >(null);
   const [copied, setCopied] = useState(false);
 
@@ -56,7 +56,7 @@ export default function QuickPayPage() {
     }
     setLoading(true);
     try {
-      const res = await apiFetch<QuickPayResponse & { qrCodeDataUrl?: string }>(
+      const res = await apiFetch<QuickPayResponse & { qrCodeDataUrl?: string; upiIntentUrl?: string }>(
         "/v1/quick-pay",
         {
           method: "POST",
@@ -74,13 +74,13 @@ export default function QuickPayPage() {
       setResult(res);
       // Fetch QR from checkout
       if (res.paymentLinkToken) {
-        const checkout = await apiFetch<{ qrCodeDataUrl?: string }>(
+        const checkout = await apiFetch<{ qrCodeDataUrl?: string; upiIntentUrl?: string }>(
           `/pay/${res.paymentLinkToken}/checkout`,
           { method: "POST", body: JSON.stringify({}) },
         ).catch(() => null);
         if (checkout?.qrCodeDataUrl)
           setResult((r) =>
-            r ? { ...r, qrCodeDataUrl: checkout.qrCodeDataUrl } : r,
+            r ? { ...r, qrCodeDataUrl: checkout.qrCodeDataUrl, upiIntentUrl: checkout.upiIntentUrl } : r,
           );
       }
     } catch (err: unknown) {
@@ -146,6 +146,7 @@ export default function QuickPayPage() {
             </div>
           </div>
 
+          {result.upiIntentUrl && <a className="btn btn-primary" href={result.upiIntentUrl}>Open UPI app</a>}
           {result.qrCodeDataUrl && (
             <div className="qr-wrap">
               <img src={result.qrCodeDataUrl} alt="UPI QR code for payment" />
