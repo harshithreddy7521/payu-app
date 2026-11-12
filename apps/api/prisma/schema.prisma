@@ -319,6 +319,11 @@ model Payment {
   providerRef String   @unique
   confirmedAt DateTime @default(now())
   receiptNo   String   @unique @default(cuid())
+  source      String   @default("PROVIDER")
+  recordedBy  String?
+  receivedAt  DateTime?
+  verificationMethod String?
+  verificationNote String?
 
   attempt     PaymentAttempt @relation(fields: [attemptId], references: [id])
   allocations Allocation[]
@@ -360,6 +365,7 @@ model LedgerEntry {
   amountPaise Int             // positive = credit, negative = debit
   currency    String          @default("INR")
   reference   String
+  source      String          @default("PROVIDER")
   postedAt    DateTime        @default(now())
   reversedBy  String?
 

@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/api";
 import type { CheckoutContext, CheckoutResponse } from "@fee/shared";
 
 type Receipt = {
+  verificationSource?: string;
   receiptNo: string;
   amountPaise: number;
   confirmedAt: string;
@@ -19,14 +20,18 @@ type PollStatus = "IDLE" | "PENDING" | "SUCCESS" | "FAILED";
 export default function CheckoutPage() {
   const { token } = useParams<{ token: string }>();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [ctx, setCtx] = useState<(CheckoutContext & {paymentMode?:string;payeeVpa?:string}) | null>(null);
+  const [ctx, setCtx] = useState<
+    (CheckoutContext & { paymentMode?: string; payeeVpa?: string }) | null
+  >(null);
   const [attempt, setAttempt] = useState<CheckoutResponse | null>(null);
   const [pollStatus, setPollStatus] = useState<PollStatus>("IDLE");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiFetch<CheckoutContext & {paymentMode?:string;payeeVpa?:string}>(`/pay/${token}`)
+    apiFetch<CheckoutContext & { paymentMode?: string; payeeVpa?: string }>(
+      `/pay/${token}`,
+    )
       .then(setCtx)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -38,6 +43,19 @@ export default function CheckoutPage() {
         .then((r) => setReceipts(r.data))
         .catch((e) => setError(e.message));
   }, [pollStatus, ctx?.status, token]);
+
+  async function checkRecordedStatus() {
+    try {
+      const latest = await apiFetch<
+        CheckoutContext & { paymentMode?: string; payeeVpa?: string }
+      >(`/pay/${token}`);
+      setCtx(latest);
+      setAttempt(null);
+      setPollStatus("IDLE");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   async function startCheckout() {
     if (!ctx) return;
@@ -147,6 +165,11 @@ export default function CheckoutPage() {
               }}
             >
               <p className="eyebrow">PAYMENT RECEIPT</p>
+              <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                {receipt.verificationSource === "MANUAL_UPI"
+                  ? "Receipt verified by merchant staff"
+                  : "Provider-confirmed payment"}
+              </p>
               <strong>{receipt.receiptNo}</strong>
               <p style={{ marginTop: 10 }}>
                 ₹{(receipt.amountPaise / 100).toLocaleString("en-IN")} ·{" "}
@@ -248,7 +271,9 @@ export default function CheckoutPage() {
                 marginBottom: 16,
               }}
             >
-              {ctx.paymentMode === "manual-upi" ? "Pay in your UPI app. Status stays pending until payment is verified." : "Scan with any UPI app · waiting for confirmation…"}
+              {ctx.paymentMode === "manual-upi"
+                ? "Pay in your UPI app. Status stays pending until payment is verified."
+                : "Scan with any UPI app · waiting for confirmation…"}
             </div>
             {attempt.upiIntentUrl && (
               <a
@@ -277,6 +302,16 @@ export default function CheckoutPage() {
           </button>
         )}
 
+        {ctx.paymentMode === "manual-upi" && (
+          <button
+            className="btn btn-ghost"
+            style={{ width: "100%", marginTop: 12 }}
+            onClick={() => void checkRecordedStatus()}
+          >
+            Check recorded payment status
+          </button>
+        )}
+
         {pollStatus === "FAILED" && (
           <div>
             <p className="error-msg" style={{ marginBottom: 12 }}>
@@ -300,7 +335,9 @@ export default function CheckoutPage() {
             textAlign: "center",
           }}
         >
-          {ctx.paymentMode === "manual-upi" ? `Paying ${ctx.payeeVpa}. Confirm the recipient name in your UPI app. Real money will be transferred; automatic confirmation is not connected.` : "Feeflow demo checkout · No real funds move"}
+          {ctx.paymentMode === "manual-upi"
+            ? `Paying ${ctx.payeeVpa}. Confirm the recipient name in your UPI app. Real money will be transferred; automatic confirmation is not connected.`
+            : "Feeflow demo checkout · No real funds move"}
         </div>
       </div>
     </div>

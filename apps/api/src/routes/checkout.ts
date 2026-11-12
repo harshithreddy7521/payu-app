@@ -52,6 +52,8 @@ export async function checkoutRoutes(app: FastifyInstance) {
     return {
       data: link.bill.allocations.map((a) => ({
         receiptNo: a.payment.receiptNo,
+        verificationSource: a.payment.source,
+        receivedAt: a.payment.receivedAt,
         amountPaise: a.amountPaise,
         confirmedAt: a.payment.confirmedAt,
         merchantName: link.bill.org.name,

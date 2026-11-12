@@ -54,7 +54,7 @@ export default function DashboardPage() {
       color: "var(--danger)",
     },
     {
-      label: "Available",
+      label: "Provider available",
       value: fmt(stats.availablePaise),
       color: "var(--primary)",
     },

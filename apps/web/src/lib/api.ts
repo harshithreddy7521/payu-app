@@ -14,14 +14,19 @@ export async function apiFetch<T>(
     if (branch)
       path += `${path.includes("?") ? "&" : "?"}branchId=${encodeURIComponent(branch)}`;
   }
-  const res = await fetch(`${API}${path}`, {
-    ...rest,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token && { Authorization: `Bearer ${token}` }),
-      ...rest.headers,
-    },
-  });
+  const headers = new Headers(rest.headers);
+  // Bodyless requests must not advertise JSON: Fastify rejects an empty JSON body.
+  // Leave multipart boundaries and explicitly supplied content types to the caller.
+  if (
+    typeof rest.body === "string" &&
+    rest.body.length > 0 &&
+    !headers.has("Content-Type")
+  ) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (token && !headers.has("Authorization"))
+    headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(`${API}${path}`, { ...rest, headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: res.statusText }));
     throw Object.assign(new Error(err.message ?? "API error"), {

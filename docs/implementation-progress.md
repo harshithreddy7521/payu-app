@@ -89,3 +89,20 @@ This increment does not complete every P0 acceptance criterion:
 
 The existing dashboard is an operational summary, not a reconciled statement of
 provider-available funds. The UI labels its differing bill and ledger date bases.
+
+## Temporary direct-UPI reconciliation increment
+
+Direct UPI now supports an owner/finance-only **Record verified payment** flow.
+Payments persist `source=MANUAL_UPI`, the verifier, received timestamp, method,
+note, and a unique normalised reference. Payment, allocation, receipt, bill,
+ledger and audit changes commit in one transaction. Current grants are checked
+again on the server; reference and bill locks guard concurrent/repeated writes.
+Partial receipts expire old pending checkout attempts so the next checkout uses
+the remaining amount. Fully paid bills also close active/expired links and
+suppress unsent reminders. Public receipts identify staff verification without
+exposing the staff identity or full transaction reference.
+
+Ledger source distinguishes direct receipts from provider-held money; direct
+receipts contribute to gross collections but not provider settlement availability.
+This increment does not replace provider verification, support splitting one
+bank reference across multiple bills, or add automated refunds/reconciliation.

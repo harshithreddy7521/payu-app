@@ -154,3 +154,34 @@ app. To share web checkout with another phone, run the web/API on reachable
 HTTPS addresses and set `WEB_URL` and `NEXT_PUBLIC_API_URL` accordingly. The QR
 and Open UPI app action directly encode the UPI payment, independently of that
 web host.
+
+## Record a manually verified UPI payment
+
+For the temporary direct UPI setup, an **Owner** or **Finance** user can choose
+**Record verified payment** on a newly created Quick Pay request, or against an
+outstanding bill in **Transactions**. Check the receiving UPI app or bank
+statement, enter the amount received, UPI/bank reference and received time (IST),
+then confirm that the credit was independently checked. Screenshots supplied by
+payers are not accepted as verification evidence in this flow.
+
+The server records the verifier, verification method and note, creates an
+attributed payment/receipt and ledger entry, and updates the bill to Partial or
+Paid. It rejects duplicate references with different details, excessive amounts,
+future receipt times and unauthorised users. Retrying the same record returns
+the original receipt. A fully paid bill suppresses queued reminders. A payer can
+use **Check recorded payment status** on the checkout page to see the result.
+Manual payments are labelled **Staff verified** and excluded from provider
+settlement availability; this is staff reconciliation, not automatic bank
+verification. It does not move money or initiate a payout.
+
+Existing databases can apply the additive upgrade before starting the API:
+
+```sh
+cd apps/api
+npx prisma db execute --file prisma/upgrades/manual-verification.sql --schema prisma/schema.prisma
+npm run db:push
+```
+
+Fresh databases only need `npm run db:push`. Regression tests including concurrent
+allocations can be run with `cd apps/api && RUN_DB_TESTS=1 npm test` against a
+local development database; test fixtures are cleaned up afterwards.

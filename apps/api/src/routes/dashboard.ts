@@ -40,12 +40,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
             : {}),
           postedAt: { gte: dateFrom, lte: dateTo },
         },
-        select: { type: true, amountPaise: true },
+        select: { type: true, amountPaise: true, source: true },
       }),
     ]);
 
     const grossConfirmedPaise = ledger
       .filter((e) => e.type === "PAYMENT")
+      .reduce((s, e) => s + e.amountPaise, 0);
+    const directCollectedPaise = ledger
+      .filter((e) => e.type === "PAYMENT" && e.source === "MANUAL_UPI")
       .reduce((s, e) => s + e.amountPaise, 0);
     const refundedPaise = ledger
       .filter((e) => e.type === "REFUND")
@@ -60,10 +63,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
     return {
       grossConfirmedPaise,
+      directCollectedPaise,
       outstandingPaise,
       refundedPaise,
       availablePaise:
-        grossConfirmedPaise - refundedPaise - settledPaise - heldPaise,
+        grossConfirmedPaise -
+        directCollectedPaise -
+        refundedPaise -
+        settledPaise -
+        heldPaise,
       heldPaise,
       settledPaise,
       dateFrom: dateFrom.toISOString(),
