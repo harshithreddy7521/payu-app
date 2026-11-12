@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { prisma } from "../lib/prisma.js";
 import { UserRole } from "@fee/shared";
 import { Err } from "@fee/shared";
 
@@ -8,6 +9,21 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
   } catch {
     throw Err.unauthorized();
   }
+  const account = await prisma.user.findFirst({
+    where: { id: req.user.sub, orgId: req.user.orgId, isActive: true },
+    include: { roleGrants: { where: { revokedAt: null } } },
+  });
+  if (!account) throw Err.unauthorized();
+  req.user.roles = [
+    ...new Set(
+      account.roleGrants
+        .filter((g) => g.orgId === account.orgId)
+        .map((g) => g.role as UserRole),
+    ),
+  ];
+  req.user.branchIds = account.roleGrants
+    .filter((g) => g.orgId === account.orgId && g.branchId)
+    .map((g) => g.branchId!);
 }
 
 export function requireRoles(...roles: UserRole[]) {

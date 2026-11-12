@@ -11,10 +11,9 @@ export async function issueBills(orgId: string, now = new Date()) {
       const today = localDate(now);
       const [year, month] = today.split("-").map(Number);
       const groups = await tx.group.findMany({
-        where: { orgId, isActive: true, frequency: "MONTHLY" },
+        where: { orgId },
         include: {
           memberships: {
-            where: { leftAt: null },
             include: { member: { include: { guardians: true } } },
           },
           reminderPolicies: { where: { isActive: true } },
@@ -22,70 +21,110 @@ export async function issueBills(orgId: string, now = new Date()) {
       });
       let issued = 0;
       for (const group of groups) {
-        const date = cycleDate(year, month - 1, group.billDayOfMonth);
-        const issueAt = istInstant(date);
-        if (
-          issueAt > now ||
-          (group.endsAt && issueAt > group.endsAt) ||
-          group.createdAt > issueAt
-        )
-          continue;
-        for (const membership of group.memberships) {
+        const versions = await tx.billingRuleVersion.findMany({
+          where: { groupId: group.id },
+          orderBy: { effectiveAt: "asc" },
+        });
+        const start = localDate(group.createdAt)
+          .slice(0, 7)
+          .split("-")
+          .map(Number);
+        for (
+          let cursor = start[0] * 12 + start[1] - 1;
+          cursor <= year * 12 + month - 1;
+          cursor++
+        ) {
+          const y = Math.floor(cursor / 12),
+            m = cursor % 12;
+          type Rules = {
+            name?: string;
+            frequency: string;
+            billDayOfMonth: number | null;
+            amountPaise: number;
+            dueDayOffset: number;
+            isActive: boolean;
+            endsAt: string | null;
+          };
+          let rule = group as unknown as Rules;
+          if (versions.length) {
+            const eligible = versions.filter(
+              (v) =>
+                v.effectiveAt <=
+                istInstant(
+                  cycleDate(y, m, (v.rules as unknown as Rules).billDayOfMonth),
+                ),
+            );
+            if (!eligible.length) continue;
+            rule = eligible.at(-1)!.rules as unknown as Rules;
+          }
+          if (!rule.isActive || rule.frequency !== "MONTHLY") continue;
+          const date = cycleDate(y, m, rule.billDayOfMonth),
+            issueAt = istInstant(date);
           if (
-            membership.member.status !== "ACTIVE" ||
-            membership.joinedAt > issueAt
+            issueAt > now ||
+            group.createdAt > issueAt ||
+            (rule.endsAt && issueAt > new Date(rule.endsAt))
           )
             continue;
-          const period = date.slice(0, 7);
-          if (
-            await tx.bill.findUnique({
-              where: {
-                membershipId_billingPeriod: {
-                  membershipId: membership.id,
-                  billingPeriod: period,
+          for (const membership of group.memberships) {
+            if (
+              membership.member.status !== "ACTIVE" ||
+              membership.joinedAt > issueAt ||
+              (membership.leftAt !== null && membership.leftAt <= issueAt)
+            )
+              continue;
+            const period = date.slice(0, 7);
+            if (
+              await tx.bill.findUnique({
+                where: {
+                  membershipId_billingPeriod: {
+                    membershipId: membership.id,
+                    billingPeriod: period,
+                  },
+                },
+              })
+            )
+              continue;
+            const dueDate = addDays(date, rule.dueDayOffset);
+            const bill = await tx.bill.create({
+              data: {
+                orgId,
+                branchId: group.branchId,
+                groupId: group.id,
+                membershipId: membership.id,
+                memberId: membership.memberId,
+                purpose: `${rule.name ?? group.name} · ${period}`,
+                amountPaise: membership.amountPaise ?? rule.amountPaise,
+                dueAt: istInstant(dueDate, "23:59"),
+                billingPeriod: period,
+                paymentLinks: {
+                  create: {
+                    expiresAt: istInstant(addDays(dueDate, 30), "23:59"),
+                  },
                 },
               },
-            })
-          )
-            continue;
-          const dueDate = addDays(date, group.dueDayOffset);
-          const bill = await tx.bill.create({
-            data: {
-              orgId,
-              branchId: group.branchId,
-              groupId: group.id,
-              membershipId: membership.id,
-              memberId: membership.memberId,
-              purpose: `${group.name} · ${period}`,
-              amountPaise: membership.amountPaise ?? group.amountPaise,
-              dueAt: istInstant(dueDate, "23:59"),
-              billingPeriod: period,
-              paymentLinks: {
-                create: {
-                  expiresAt: istInstant(addDays(dueDate, 30), "23:59"),
-                },
-              },
-            },
-          });
-          for (const policy of group.reminderPolicies)
-            for (const guardian of membership.member.guardians) {
-              const scheduledAt = istInstant(
-                addDays(dueDate, policy.offsetDays),
-                policy.sendTimeIST,
-              );
-              await tx.messageOccurrence.create({
-                data: {
-                  billId: bill.id,
-                  guardianId: guardian.id,
-                  channel: policy.channels[0] ?? "WHATSAPP",
-                  templateKey: "reminder_before",
-                  language: policy.language,
-                  scheduledAt,
-                  occurrenceKey: `${bill.id}:${guardian.id}:${policy.id}`,
-                },
-              });
-            }
-          issued++;
+            });
+            for (const policy of group.reminderPolicies)
+              for (const guardian of membership.member.guardians) {
+                const scheduledAt = istInstant(
+                  addDays(dueDate, policy.offsetDays),
+                  policy.sendTimeIST,
+                );
+                if (localDate(scheduledAt) < localDate(now)) continue;
+                await tx.messageOccurrence.create({
+                  data: {
+                    billId: bill.id,
+                    guardianId: guardian.id,
+                    channel: policy.channels[0] ?? "WHATSAPP",
+                    templateKey: "reminder_before",
+                    language: policy.language,
+                    scheduledAt,
+                    occurrenceKey: `${bill.id}:${guardian.id}:${policy.id}`,
+                  },
+                });
+              }
+            issued++;
+          }
         }
       }
       return { issued };
@@ -137,6 +176,7 @@ export async function dispatchReminders(now = new Date()) {
           !guardian ||
           guardian.memberId !== bill.memberId ||
           guardian.optOut ||
+          (current.channel === "WHATSAPP" && !guardian.whatsappConsentedAt) ||
           bill.paymentLinks.some((l) => l.status === "REVOKED");
         if (suppress) {
           await tx.messageOccurrence.update({
@@ -151,7 +191,11 @@ export async function dispatchReminders(now = new Date()) {
         if (bill!.paymentLinks.some((l) => l.attempts.length)) return;
         // 08:00–20:00 IST quiet hours; no catch-up burst outside the window.
         const hour = new Date(now.getTime() + 330 * 60000).getUTCHours();
-        if (hour < 8 || hour >= 20) return;
+        if (
+          hour < bill!.org.reminderStartHour ||
+          hour >= bill!.org.reminderEndHour
+        )
+          return;
         const recipients = await tx.guardian.findMany({
           where: { phone: guardian!.phone, member: { orgId: bill!.orgId } },
           select: { id: true },
@@ -163,7 +207,7 @@ export async function dispatchReminders(now = new Date()) {
             status: { in: ["SUBMITTED", "DELIVERED", "UNKNOWN"] },
           },
         });
-        if (recent >= 3) return;
+        if (recent >= bill!.org.reminderDailyCap) return;
         let link = bill!.paymentLinks.find(
           (l) => l.status === "ACTIVE" && l.expiresAt > now,
         );

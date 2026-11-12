@@ -120,6 +120,10 @@ model Organisation {
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
 
+  reminderStartHour Int @default(8)
+  reminderEndHour Int @default(20)
+  reminderDailyCap Int @default(3)
+
   branches    Branch[]
   users       User[]
   roleGrants  RoleGrant[]
@@ -203,6 +207,8 @@ model Guardian {
   email    String?
   verified Boolean @default(false)
   optOut   Boolean @default(false)
+  whatsappConsentedAt DateTime?
+  consentEvidence String?
 
   member Member @relation(fields: [memberId], references: [id])
 }
@@ -474,4 +480,23 @@ model AuditEvent {
   createdAt  DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id])
+}
+
+model RequestResult {
+  id String @id @default(cuid())
+  orgId String
+  operation String
+  key String
+  fingerprint String
+  result Json
+  createdAt DateTime @default(now())
+  @@unique([orgId, operation, key])
+}
+model BillingRuleVersion {
+  id String @id @default(cuid())
+  groupId String
+  effectiveAt DateTime
+  rules Json
+  createdAt DateTime @default(now())
+  @@index([groupId, effectiveAt])
 }

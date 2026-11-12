@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, useRef, use } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getToken } from "@/lib/auth";
@@ -59,15 +59,21 @@ export default function GroupDetail({
   useEffect(() => {
     void load();
   }, [id]);
+  const requestRef = useRef<{ body: string; key: string } | null>(null);
   async function action(path: string, method: string, body?: unknown) {
     setBusy(true);
     setError("");
     try {
+      const fingerprint = JSON.stringify({ path, method, body });
+      if (requestRef.current?.body !== fingerprint)
+        requestRef.current = { body: fingerprint, key: crypto.randomUUID() };
       await apiFetch(path, {
+        headers: { "Idempotency-Key": requestRef.current!.key },
         method,
         token: getToken()!,
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
+      requestRef.current = null;
       setMessage("Changes saved.");
       await load();
     } catch (e) {
@@ -323,10 +329,6 @@ export default function GroupDetail({
                 onChange={(e) => setChannel(e.target.value)}
               >
                 <option value="WHATSAPP">WhatsApp</option>
-                <option value="SMS">SMS</option>
-                <option value="FALLBACK">
-                  WhatsApp, then SMS on confirmed failure
-                </option>
               </select>
             </div>
             <button className="btn btn-primary" disabled={busy}>

@@ -12,6 +12,7 @@ type Reminder = {
   bill: { purpose: string; amountPaise: number; paidPaise: number };
 };
 export default function Reminders() {
+  const [settings,setSettings]=useState({reminderStartHour:8,reminderEndHour:20,reminderDailyCap:3});
   const [rows, setRows] = useState<Reminder[]>([]),
     [error, setError] = useState(""),
     [message, setMessage] = useState(""),
@@ -28,6 +29,7 @@ export default function Reminders() {
   }
   useEffect(() => {
     void load();
+    apiFetch<typeof settings>("/v1/reminder-settings",{token:getToken()!}).then(setSettings).catch(e=>setError(e.message));
   }, []);
   async function run() {
     setBusy(true);
@@ -81,7 +83,7 @@ export default function Reminders() {
         </button>
       </div>
       <div className="notice">
-        08:00–20:00 IST sending window · Up to 3 reminders per guardian per day
+        {settings.reminderStartHour}:00–{settings.reminderEndHour}:00 IST sending window · Up to {settings.reminderDailyCap} reminders per recipient per 24 hours
         · Payment-in-progress grace period: 10 minutes. Demo messages use the
         fake provider.
       </div>

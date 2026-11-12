@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getToken, getUser } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import type { QuickPayResponse, UserSummary } from "@fee/shared";
@@ -8,6 +8,8 @@ import { MessageChannel } from "@fee/shared";
 type Branch = { id: string; name: string };
 
 export default function QuickPayPage() {
+  const requestRef = useRef<{ body: string; key: string } | null>(null);
+  const [consent, setConsent] = useState(false);
   const [user, setUser] = useState<UserSummary | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
@@ -57,10 +59,21 @@ export default function QuickPayPage() {
     }
     setLoading(true);
     try {
+      const fingerprint = JSON.stringify({
+        amount,
+        branchId,
+        purpose,
+        phone,
+        channel,
+        consent,
+      });
+      if (requestRef.current?.body !== fingerprint)
+        requestRef.current = { body: fingerprint, key: crypto.randomUUID() };
       const res = await apiFetch<
         QuickPayResponse & { qrCodeDataUrl?: string; upiIntentUrl?: string }
       >("/v1/quick-pay", {
         method: "POST",
+        headers: { "Idempotency-Key": requestRef.current!.key },
         token: getToken()!,
         body: JSON.stringify({
           amountPaise: paise,
@@ -68,6 +81,7 @@ export default function QuickPayPage() {
           purpose: purpose.trim(),
           recipientPhone: phone || undefined,
           deliveryChannel: channel || undefined,
+          deliveryConsent: consent,
           isGuest: !phone,
         }),
       });
@@ -109,6 +123,7 @@ export default function QuickPayPage() {
   }
 
   function reset() {
+    requestRef.current = null;
     setResult(null);
     setAmount("");
     setPurpose("");
@@ -308,11 +323,21 @@ export default function QuickPayPage() {
                     >
                       <option value="">Display QR only</option>
                       <option value={MessageChannel.WHATSAPP}>WhatsApp</option>
-                      <option value={MessageChannel.SMS}>SMS</option>
                     </select>
                   </div>
                 )}
 
+                {phone && channel && (
+                  <label style={{ display: "block", marginBottom: 16 }}>
+                    <input
+                      type="checkbox"
+                      required
+                      checked={consent}
+                      onChange={(e) => setConsent(e.target.checked)}
+                    />{" "}
+                    The recipient agreed to receive WhatsApp payment messages.
+                  </label>
+                )}
                 {error && (
                   <p className="error-msg" style={{ marginBottom: 12 }}>
                     {error}

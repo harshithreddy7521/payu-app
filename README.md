@@ -185,3 +185,36 @@ npm run db:push
 Fresh databases only need `npm run db:push`. Regression tests including concurrent
 allocations can be run with `cd apps/api && RUN_DB_TESTS=1 npm test` against a
 local development database; test fixtures are cleaned up afterwards.
+
+## Audit-gap hardening and WhatsApp preparation
+
+Quick Pay now uses persisted, organisation-scoped `Idempotency-Key` results and
+creates distinct bills for distinct requests even when amount/purpose match.
+Membership enrollment accepts the same retry header. Changed payloads under a
+reused key conflict. Web/mobile clients retain keys across transport retries.
+Quick Pay validates member ownership and atomically queues delivery separately
+from bill creation. A delivery failure cannot recreate the bill.
+
+Authenticated routes refresh active role/branch grants. Group removal enforces
+branch access. Refund request replay is tenant-checked and allocations are
+serialized to prevent concurrent over-refunds. Refund execution is still not
+implemented; these are requests only.
+
+Billing recovers eligible historical months, using versioned group rules after
+edits, with membership/period uniqueness. Historical reminders older than today
+are not burst-sent. Versions are prospective from this upgrade: past rule edits
+made before version tracking cannot be reconstructed. Archived members remain
+excluded from automatic billing; historical corrections need explicit review.
+
+Record guardian WhatsApp permission in **Members** before reminders are eligible.
+Existing guardians have no consent evidence and will be suppressed until an owner
+records it. Withdrawal is audited and cancels queued reminders. Owners can edit
+sending hours (IST) and recipient caps in **Settings**. Quick Pay WhatsApp sends
+also require an explicit permission checkbox. SMS integration is deferred.
+
+After pulling this schema update, stop API/worker, run `cd apps/api && npm run
+db:push`, and restart both. `predev`/`preworker` regenerate Prisma automatically;
+these scripts do not silently apply database changes. Back up deployed databases
+before upgrades. See [Meta setup guide](docs/whatsapp-meta-setup.md) to create a
+WhatsApp test account. Keep `MESSAGING_PROVIDER=fake` until the real adapter is
+implemented and tested.

@@ -21,6 +21,56 @@ const createMemberSchema = z.object({
 });
 
 export async function memberRoutes(app: FastifyInstance) {
+  app.put(
+    "/:id/guardians/:guardianId/whatsapp-consent",
+    { preHandler: [requireRoles(UserRole.OWNER)] },
+    async (req) => {
+      const { id, guardianId } = req.params as {
+        id: string;
+        guardianId: string;
+      };
+      const body = z
+        .object({
+          optIn: z.boolean(),
+          evidence: z.string().trim().min(5).max(500),
+        })
+        .parse(req.body);
+      const guardian = await prisma.guardian.findFirst({
+        where: {
+          id: guardianId,
+          memberId: id,
+          member: { orgId: req.user.orgId },
+        },
+      });
+      if (!guardian) throw Err.notFound("Guardian");
+      return prisma.$transaction(async (tx) => {
+        const contact = await tx.guardian.update({
+          where: { id: guardianId },
+          data: {
+            optOut: !body.optIn,
+            whatsappConsentedAt: body.optIn ? new Date() : null,
+            consentEvidence: body.evidence,
+          },
+        });
+        await tx.auditEvent.create({
+          data: {
+            orgId: req.user.orgId,
+            userId: req.user.sub,
+            action: body.optIn ? "WHATSAPP_OPT_IN" : "WHATSAPP_OPT_OUT",
+            entity: "Guardian",
+            entityId: guardianId,
+            meta: { evidence: body.evidence },
+          },
+        });
+        if (!body.optIn)
+          await tx.messageOccurrence.updateMany({
+            where: { guardianId, status: "QUEUED" },
+            data: { status: "SUPPRESSED", failureReason: "Contact opted out" },
+          });
+        return contact;
+      });
+    },
+  );
   app.get("/", { preHandler: [requireAuth] }, async (req) => {
     const user = req.user;
     const {

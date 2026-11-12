@@ -43,6 +43,8 @@ test(
                   name: "Shared guardian",
                   phone: "9876543210",
                   optOut: i === 1,
+                  whatsappConsentedAt: new Date(),
+                  consentEvidence: "Synthetic fixture opt-in",
                 },
               },
               memberships: {
@@ -62,14 +64,17 @@ test(
       ]);
       assert.equal(
         runs.reduce((s, r) => s + r.issued, 0),
-        3,
+        6,
       );
       const bills = await prisma.bill.findMany({
         where: { orgId: org.id },
         include: { paymentLinks: true },
       });
-      assert.equal(bills.length, 3);
-      assert(bills.every((b) => b.billingPeriod === "2028-02"));
+      assert.equal(bills.length, 6);
+      assert.deepEqual([...new Set(bills.map((b) => b.billingPeriod))].sort(), [
+        "2028-01",
+        "2028-02",
+      ]);
       await prisma.bill.updateMany({
         where: { orgId: org.id, memberId: members[0].id },
         data: { status: "PAID", paidPaise: 10000 },

@@ -106,3 +106,28 @@ Ledger source distinguishes direct receipts from provider-held money; direct
 receipts contribute to gross collections but not provider settlement availability.
 This increment does not replace provider verification, support splitting one
 bank reference across multiple bills, or add automated refunds/reconciliation.
+
+## Audit hardening increment
+
+Closed the five concrete defects raised in the audit: Quick Pay key-based
+idempotency, branch-scoped membership removal, Quick Pay member tenant validation,
+missed-month billing recovery and tenant-safe refund replay. Added current-grant
+refresh, enrollment retry keys, locked refund limits, prospective group rule
+versions, atomic Quick Pay outbox work, consent evidence/withdrawal and per-tenant
+sending windows/caps. Sending still uses the fake provider; SMS integration is
+explicitly deferred. No claim of completed native parity, provider onboarding,
+MFA, complete OpenAPI contracts or settlement execution is made by this increment.
+
+Historical billing recovery uses known group rule versions and current membership
+records. It cannot reconstruct edits made before version tracking, or previously
+overwritten membership join/leave histories. Review legacy historical corrections
+rather than assuming full historical reconstruction. Existing bill terms remain
+unchanged. Closed/archived members remain excluded from automatic new billing.
+
+Nine API/database tests plus the request-header regression test pass. New tests
+exercise concurrent key reuse, changed-payload conflicts, equal-value independent
+bills, foreign members, branch restrictions, permission revocation, enrollment
+retries, delivery outbox deduplication, refund isolation and historical fee amounts.
+See `docs/whatsapp-meta-setup.md` for account preparation; callback verification,
+signed Meta events, approved-template dispatch and provider recovery are the next
+integration increment, requiring Meta account inputs.

@@ -9,7 +9,9 @@
     "db:seed": "tsx src/lib/seed.ts",
     "db:studio": "prisma studio",
     "worker": "tsx src/worker.ts",
-    "test": "tsx --test src/lib/*.test.ts"
+    "test": "tsx --test src/lib/*.test.ts",
+    "predev": "prisma generate",
+    "preworker": "prisma generate"
   },
   "dependencies": {
     "@fee/shared": "*",

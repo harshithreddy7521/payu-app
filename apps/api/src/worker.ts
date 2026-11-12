@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { dispatchQuickPay } from "./lib/quickPayOutbox.js";
 import { prisma } from "./lib/prisma.js";
 import { issueBills, dispatchReminders } from "./lib/automation.js";
 let running = false;
@@ -11,6 +12,7 @@ async function tick() {
     }))
       await issueBills(org.id);
     await dispatchReminders();
+    await dispatchQuickPay();
   } catch (error) {
     console.error("Automation cycle failed", error);
   } finally {

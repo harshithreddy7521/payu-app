@@ -1,4 +1,6 @@
 import type { FastifyInstance } from "fastify";
+import { randomUUID } from "node:crypto";
+import { once } from "../lib/requestResult.js";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { requireAuth, requireRoles, branchScope } from "../middleware/auth.js";
@@ -111,12 +113,33 @@ export async function groupRoutes(app: FastifyInstance) {
         .partial()
         .extend({ isActive: z.boolean().optional() })
         .parse(req.body);
-      return prisma.group.update({
-        where: { id },
-        data: {
-          ...body,
-          endsAt: body.endsAt ? new Date(body.endsAt) : undefined,
-        },
+      return prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"billing:" + req.user.orgId}))`;
+        if (
+          !(await tx.billingRuleVersion.findFirst({ where: { groupId: id } }))
+        )
+          await tx.billingRuleVersion.create({
+            data: {
+              groupId: id,
+              effectiveAt: group.createdAt,
+              rules: JSON.parse(JSON.stringify(group)),
+            },
+          });
+        const updated = await tx.group.update({
+          where: { id },
+          data: {
+            ...body,
+            endsAt: body.endsAt ? new Date(body.endsAt) : undefined,
+          },
+        });
+        await tx.billingRuleVersion.create({
+          data: {
+            groupId: id,
+            effectiveAt: new Date(),
+            rules: JSON.parse(JSON.stringify(updated)),
+          },
+        });
+        return updated;
       });
     },
   );
@@ -144,6 +167,7 @@ export async function groupRoutes(app: FastifyInstance) {
         .max(5)
         .parse(req.body);
       return prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"billing:" + req.user.orgId}))`;
         await tx.reminderPolicy.updateMany({
           where: { groupId: id },
           data: { isActive: false },
@@ -195,9 +219,15 @@ export async function groupRoutes(app: FastifyInstance) {
     async (req) => {
       const { id, memberId } = req.params as { id: string; memberId: string };
       const membership = await prisma.membership.findFirst({
-        where: { groupId: id, memberId, orgId: req.user.orgId },
+        where: {
+          groupId: id,
+          memberId,
+          orgId: req.user.orgId,
+          group: branchScope(req.user),
+        },
       });
       if (!membership) throw Err.notFound("Membership");
+      if (membership.leftAt) return membership;
       return prisma.membership.update({
         where: { id: membership.id },
         data: { leftAt: new Date() },
@@ -229,24 +259,38 @@ export async function groupRoutes(app: FastifyInstance) {
       if (!group.isActive || (group.endsAt && group.endsAt < new Date()))
         throw Err.validation("Group is inactive or has ended");
 
-      const existing = await prisma.membership.findUnique({
-        where: { memberId_groupId: { memberId, groupId: id } },
-      });
-      if (existing && !existing.leftAt)
-        throw Err.conflict("Member already in group");
-
-      const membership = await prisma.membership.upsert({
-        where: { memberId_groupId: { memberId, groupId: id } },
-        create: { memberId, groupId: id, orgId: req.user.orgId, amountPaise },
-        update: {
-          leftAt: null,
-          joinedAt: new Date(),
-          amountPaise: amountPaise ?? null,
-        },
-      });
-
-      const preview = nextBillDates(group, 3);
-      return reply.status(201).send({ membership, preview });
+      return prisma.$transaction(async (tx) =>
+        once(
+          tx,
+          req.user.orgId,
+          `membership:${id}`,
+          String(req.headers["idempotency-key"] ?? randomUUID()),
+          { memberId, amountPaise },
+          async () => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"billing:" + req.user.orgId}))`;
+            const existing = await tx.membership.findUnique({
+              where: { memberId_groupId: { memberId, groupId: id } },
+            });
+            if (existing && !existing.leftAt)
+              throw Err.conflict("Member already in group");
+            const membership = await tx.membership.upsert({
+              where: { memberId_groupId: { memberId, groupId: id } },
+              create: {
+                memberId,
+                groupId: id,
+                orgId: req.user.orgId,
+                amountPaise,
+              },
+              update: {
+                leftAt: null,
+                joinedAt: new Date(),
+                amountPaise: amountPaise ?? null,
+              },
+            });
+            return { membership, preview: nextBillDates(group, 3) };
+          },
+        ),
+      );
     },
   );
 }

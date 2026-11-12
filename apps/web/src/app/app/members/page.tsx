@@ -8,7 +8,13 @@ type Member = {
   name: string;
   externalRef?: string;
   status: string;
-  guardians: { name: string; phone: string }[];
+  guardians: {
+    id: string;
+    name: string;
+    phone: string;
+    whatsappConsentedAt: string | null;
+    optOut: boolean;
+  }[];
 };
 type ImportRow = {
   row: number;
@@ -27,6 +33,31 @@ export default function MembersPage() {
     [showImport, setShowImport] = useState(false),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState("");
+  const [contact, setContact] = useState<{
+    memberId: string;
+    guardianId: string;
+    optIn: boolean;
+  } | null>(null);
+  const [evidence, setEvidence] = useState("");
+  async function saveConsent(e: React.FormEvent) {
+    e.preventDefault();
+    if (!contact) return;
+    try {
+      await apiFetch(
+        `/v1/members/${contact.memberId}/guardians/${contact.guardianId}/whatsapp-consent`,
+        {
+          method: "PUT",
+          token: getToken()!,
+          body: JSON.stringify({ optIn: contact.optIn, evidence }),
+        },
+      );
+      setContact(null);
+      setEvidence("");
+      void load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
   async function load() {
     setLoading(true);
     try {
@@ -104,6 +135,39 @@ export default function MembersPage() {
         <p className="success-msg" role="status">
           {notice}
         </p>
+      )}
+      {contact && (
+        <form
+          className="card form-card"
+          onSubmit={saveConsent}
+          style={{ marginBottom: 24 }}
+        >
+          <h2 className="form-title">
+            {contact.optIn
+              ? "Record WhatsApp permission"
+              : "Withdraw WhatsApp permission"}
+          </h2>
+          <label className="label" htmlFor="consent-evidence">
+            How was permission confirmed / withdrawn?
+          </label>
+          <textarea
+            id="consent-evidence"
+            className="input"
+            required
+            minLength={5}
+            maxLength={500}
+            value={evidence}
+            onChange={(e) => setEvidence(e.target.value)}
+          />
+          <button className="btn btn-primary">Save permission record</button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => setContact(null)}
+          >
+            Cancel
+          </button>
+        </form>
       )}
       <div className="toolbar">
         <input
@@ -240,6 +304,26 @@ export default function MembersPage() {
                     <span className="badge badge-success">Active</span>
                   </td>
                   <td>
+                    {m.guardians[0] && (
+                      <button
+                        className="btn btn-ghost"
+                        onClick={() => {
+                          setContact({
+                            memberId: m.id,
+                            guardianId: m.guardians[0].id,
+                            optIn:
+                              !m.guardians[0].whatsappConsentedAt ||
+                              m.guardians[0].optOut,
+                          });
+                          setEvidence("");
+                        }}
+                      >
+                        {m.guardians[0].whatsappConsentedAt &&
+                        !m.guardians[0].optOut
+                          ? "Withdraw WhatsApp permission"
+                          : "Record WhatsApp permission"}
+                      </button>
+                    )}
                     <button
                       className="btn btn-ghost"
                       onClick={() => void archive(m.id)}

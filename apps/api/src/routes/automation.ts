@@ -6,6 +6,62 @@ import { requireAuth, requireRoles, branchScope } from "../middleware/auth.js";
 import { Err, UserRole } from "@fee/shared";
 import { issueBills } from "../lib/automation.js";
 export async function automationRoutes(app: FastifyInstance) {
+  app.get(
+    "/reminder-settings",
+    {
+      preHandler: [
+        requireRoles(UserRole.OWNER, UserRole.FINANCE, UserRole.BRANCH_MANAGER),
+      ],
+    },
+    async (req) =>
+      prisma.organisation.findUniqueOrThrow({
+        where: { id: req.user.orgId },
+        select: {
+          reminderStartHour: true,
+          reminderEndHour: true,
+          reminderDailyCap: true,
+        },
+      }),
+  );
+  app.put(
+    "/reminder-settings",
+    { preHandler: [requireRoles(UserRole.OWNER)] },
+    async (req) => {
+      const body = z
+        .object({
+          reminderStartHour: z.number().int().min(0).max(23),
+          reminderEndHour: z.number().int().min(1).max(24),
+          reminderDailyCap: z.number().int().min(1).max(10),
+        })
+        .refine(
+          (p) => p.reminderStartHour < p.reminderEndHour,
+          "Sending window must end after it starts",
+        )
+        .parse(req.body);
+      return prisma.$transaction(async (tx) => {
+        const settings = await tx.organisation.update({
+          where: { id: req.user.orgId },
+          data: body,
+          select: {
+            reminderStartHour: true,
+            reminderEndHour: true,
+            reminderDailyCap: true,
+          },
+        });
+        await tx.auditEvent.create({
+          data: {
+            orgId: req.user.orgId,
+            userId: req.user.sub,
+            action: "REMINDER_SETTINGS_CHANGE",
+            entity: "Organisation",
+            entityId: req.user.orgId,
+            meta: body,
+          },
+        });
+        return settings;
+      });
+    },
+  );
   app.get("/branches", { preHandler: [requireAuth] }, async (req) => ({
     data: await prisma.branch.findMany({
       where: {
