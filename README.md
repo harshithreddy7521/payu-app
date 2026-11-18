@@ -218,3 +218,25 @@ these scripts do not silently apply database changes. Back up deployed databases
 before upgrades. See [Meta setup guide](docs/whatsapp-meta-setup.md) to create a
 WhatsApp test account. Keep `MESSAGING_PROVIDER=fake` until the real adapter is
 implemented and tested.
+
+## Android/iOS staff app and finance review
+
+`apps/mobile` now has a runnable Expo application instead of an isolated screen.
+It includes sign-in, secure sessions, Quick Pay/QR/share, dashboard, members,
+groups, transactions, manual verification and finance-review screens. See
+[mobile setup and release gates](docs/mobile-release.md) for configuration,
+bundling checks, EAS build profiles, signing requirements and remaining work.
+
+Notifications are paused unless `NOTIFICATIONS_ENABLED=true` is explicitly set.
+The billing worker continues issuing bills. Keep sending disabled during Meta
+review; no silent SMS fallback or real provider connection is added here.
+
+Owners can request **bank destination review**, and a different authorised actor
+can approve the review. Only masked details are stored, and review approval
+cannot activate a payout destination. Finance users can independently approve
+refund reviews; requests remain REQUESTED until a future provider submits them.
+Web finance review is at `/app/finance`. These flows do not move money.
+
+After pulling, run `cd apps/api && npm run db:push` and restart API/worker. For
+production, the API refuses startup with the example JWT secret; configure a
+unique secret of at least 32 characters and `CORS_ORIGINS` explicitly.

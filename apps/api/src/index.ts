@@ -1,4 +1,5 @@
 import "dotenv/config";
+import {financeReviewRoutes} from "./routes/financeReview.js";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
@@ -17,9 +18,11 @@ import { webhookRoutes } from "./routes/webhooks.js";
 import { refundRoutes } from "./routes/refunds.js";
 import { errorHandler } from "./middleware/error.js";
 
+if(process.env.NODE_ENV === "production" && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length<32 || /change-me|dev-secret/.test(process.env.JWT_SECRET)))throw new Error("Configure a unique JWT_SECRET of at least 32 characters before production startup");
+
 const app = Fastify({ logger: { level: process.env.NODE_ENV === "test" ? "silent" : "info" } });
 
-await app.register(cors, { origin: true });
+await app.register(cors, { origin: process.env.NODE_ENV === "production" ? (process.env.CORS_ORIGINS??"").split(",").filter(Boolean) : true });
 await app.register(jwt, { secret: process.env.JWT_SECRET ?? "dev-secret-change-me" });
 
 await app.register(swagger, {
@@ -32,6 +35,7 @@ await app.register(swaggerUi, { routePrefix: "/docs" });
 
 app.setErrorHandler(errorHandler);
 
+await app.register(financeReviewRoutes,{prefix:"/v1"});
 await app.register(automationRoutes, { prefix: "/v1" });
 await app.register(authRoutes, { prefix: "/v1/auth" });
 await app.register(quickPayRoutes, { prefix: "/v1" });

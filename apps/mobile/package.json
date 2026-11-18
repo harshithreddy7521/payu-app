@@ -6,21 +6,24 @@
     "dev": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "build": "echo 'Use EAS Build for production'"
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "export:ios": "expo export --platform ios",
+    "export:android": "expo export --platform android"
   },
   "dependencies": {
     "@fee/shared": "*",
-    "expo": "^52.0.0",
-    "expo-status-bar": "^2.0.0",
-    "expo-router": "^4.0.0",
-    "expo-secure-store": "^14.0.0",
-    "react": "^18.3.0",
-    "react-native": "^0.76.0",
+    "expo": "58.0.26",
+    "expo-status-bar": "~58.0.5",
+    "expo-secure-store": "~58.0.3",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
     "react-native-qrcode-svg": "^6.3.2",
-    "react-native-svg": "^15.8.0"
+    "react-native-svg": "15.16.0",
+    "expo-asset": "~58.0.21"
   },
   "devDependencies": {
-    "@types/react": "~18.3.12",
+    "@types/react": "~19.2.0",
     "typescript": "^5.7.3"
   }
 }

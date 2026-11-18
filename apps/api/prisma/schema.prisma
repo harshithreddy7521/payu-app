@@ -500,3 +500,16 @@ model BillingRuleVersion {
   createdAt DateTime @default(now())
   @@index([groupId, effectiveAt])
 }
+
+model DestinationChange {
+ id String @id @default(cuid())
+ orgId String
+ maskedValue String
+ ifsc String
+ status String @default("REQUESTED")
+ requestedBy String
+ reviewedBy String?
+ createdAt DateTime @default(now())
+ reviewedAt DateTime?
+ @@index([orgId, createdAt])
+}

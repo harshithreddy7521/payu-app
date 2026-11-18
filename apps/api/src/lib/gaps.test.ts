@@ -15,7 +15,8 @@ test(
   "audit gaps: key replay/conflicts, tenant and branch boundaries, historical rules and refund isolation",
   { skip: process.env.RUN_DB_TESTS !== "1" },
   async () => {
-    const app = Fastify();
+    const oldNotifications=process.env.NOTIFICATIONS_ENABLED;process.env.NOTIFICATIONS_ENABLED="true";
+  const app = Fastify();
     await app.register(jwt, { secret: "test-only-secret" });
     app.setErrorHandler(errorHandler);
     await app.register(quickPayRoutes, { prefix: "/v1" });
@@ -327,7 +328,8 @@ test(
         403,
       );
     } finally {
-      await app.close();
+      if(oldNotifications===undefined)delete process.env.NOTIFICATIONS_ENABLED;else process.env.NOTIFICATIONS_ENABLED=oldNotifications;
+    await app.close();
       const groups = await prisma.group.findMany({
         where: { orgId: { in: orgIds } },
       });

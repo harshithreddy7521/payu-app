@@ -14,6 +14,7 @@ const NAV = [
   ["Reminders", "reminders", "reminders"],
   ["Transactions", "transactions", "transactions"],
   ["Settlements", "settlements", "settlements"],
+  ["Finance review", "finance", "settlements"],
   ["Settings", "settings", "settings"],
 ];
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -66,7 +67,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <nav aria-label="Main navigation">
           {NAV.filter(
             (n) =>
-              !["reminders", "settlements"].includes(n[1]) ||
+              !["reminders", "settlements", "finance"].includes(n[1]) ||
               user.roles.some((r) =>
                 ["OWNER", "FINANCE", "BRANCH_MANAGER"].includes(r),
               ),

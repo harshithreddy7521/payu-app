@@ -11,8 +11,7 @@ async function tick() {
       where: { status: "ACTIVE" },
     }))
       await issueBills(org.id);
-    await dispatchReminders();
-    await dispatchQuickPay();
+    if(process.env.NOTIFICATIONS_ENABLED === "true") { await dispatchReminders(); await dispatchQuickPay(); }
   } catch (error) {
     console.error("Automation cycle failed", error);
   } finally {

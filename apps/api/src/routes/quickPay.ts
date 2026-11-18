@@ -35,6 +35,7 @@ export async function quickPayRoutes(app: FastifyInstance) {
     },
     async (req, reply) => {
       const body = schema.parse(req.body);
+    if(body.deliveryChannel && process.env.NOTIFICATIONS_ENABLED!=="true")throw Err.validation("Notification sending is paused during provider review. Create a QR/link without message delivery.");
       const { idempotencyKey, ...payload } = body;
       const key = String(
         req.headers["idempotency-key"] ?? idempotencyKey ?? randomUUID(),
