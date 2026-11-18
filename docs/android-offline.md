@@ -93,3 +93,17 @@ locking and cross-device restoration still require physical-device acceptance.
 Before using real financial data: verify export → external save → fresh-device
 restore, wrong-passphrase behavior, collector restrictions, app upgrade retention,
 UPI handoff, and signed APK certificate/manifest. Maintain independent backups.
+
+## Gradle distribution download timeout
+
+The build needs Internet access to download Gradle, SDKs and Maven dependencies;
+the installed offline app does not. The script applies a 120-second wrapper
+network timeout after Expo prebuild and retries distribution bootstrap three
+times. Native compilation/signing failures are not automatically retried.
+
+If the services.gradle.org redirect cannot connect, retry the same build using
+`--gradle-direct-download` to use the official downloads.gradle.org host. You can
+also set `--gradle-download-timeout 180000`. Existing checksums are preserved;
+TLS verification is never disabled. A longer timeout cannot fix a blocked host:
+check your VPN/proxy/firewall or try another trusted network if both hosts fail.
+The Expo `expo-system-ui` notice is unrelated to a Gradle download timeout.
