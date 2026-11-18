@@ -1,5 +1,8 @@
 # Feeflow — India Fee Collection App
 
+For Android APK creation and private signing on macOS, see the
+[Android APK build README](README-ANDROID-APK.md).
+
 Multi-tenant fee collection platform for schools, sports academies and restaurants.
 UPI checkout via WhatsApp/SMS links and counter QR. Built to the requirements spec v1.0.
 
