@@ -240,3 +240,11 @@ Web finance review is at `/app/finance`. These flows do not move money.
 After pulling, run `cd apps/api && npm run db:push` and restart API/worker. For
 production, the API refuses startup with the example JWT secret; configure a
 unique secret of at least 32 characters and `CORS_ORIGINS` explicitly.
+
+## Single-device Android edition
+
+The mobile entry point now uses local SQLCipher SQLite storage, admin setup and
+admin-only encrypted backup/restore. No API configuration is needed for this
+edition. See [offline Android setup](docs/android-offline.md). Existing server
+data is preserved but not automatically copied to a phone. Notifications and
+cloud-dependent finance actions are unavailable in the local edition.

@@ -1,23 +1,11 @@
-import * as SecureStore from "expo-secure-store";
 import type { UserSummary } from "@fee/shared";
+import { lock } from "../local/api";
 export type Session = { token: string; user: UserSummary };
-const KEY = "feeflow.session.v1";
+// No persistent bearer token: every process start requires a fresh local unlock.
 export async function loadSession(): Promise<Session | null> {
-  try {
-    const value = await SecureStore.getItemAsync(KEY);
-    if (!value) return null;
-    const s = JSON.parse(value);
-    if (typeof s.token !== "string" || !s.user?.id) return null;
-    return s;
-  } catch {
-    return null;
-  }
+  return null;
 }
-export async function saveSession(session: Session) {
-  await SecureStore.setItemAsync(KEY, JSON.stringify(session), {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-  });
-}
+export async function saveSession(_session: Session) {}
 export async function clearSession() {
-  await SecureStore.deleteItemAsync(KEY);
+  lock();
 }

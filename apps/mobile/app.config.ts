@@ -2,7 +2,7 @@ import type { ExpoConfig } from "expo/config";
 export default (): ExpoConfig => ({
   name: "Feeflow",
   slug: "feeflow",
-  version: "0.1.0",
+  version: "0.2.0",
   scheme: "feeflow",
   orientation: "default",
   userInterfaceStyle: "light",
@@ -13,9 +13,22 @@ export default (): ExpoConfig => ({
   },
   android: {
     package: "com.feeflow.staff",
+    versionCode: 2,
     permissions: [],
     allowBackup: false,
+    blockedPermissions:
+      process.env.APP_VARIANT === "production"
+        ? [
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
+          ]
+        : [],
   },
-  plugins: ["expo-secure-store"],
+  plugins: [
+    "expo-secure-store",
+    ["expo-sqlite", { useSQLCipher: true }],
+    "./plugins/withReleaseSigning",
+    "./plugins/withAndroidPrivacy",
+  ],
   extra: { releaseStage: process.env.APP_VARIANT ?? "development" },
 });

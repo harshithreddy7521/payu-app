@@ -12,3 +12,8 @@ prisma/dev.db-journal
 *.keystore
 *.p12
 *.mobileprovision
+
+apps/mobile/android/
+apps/mobile/ios/
+*.jks
+signing-credentials.json

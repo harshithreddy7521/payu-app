@@ -19,7 +19,10 @@ import { StatusBar } from "expo-status-bar";
 import QRCode from "react-native-qrcode-svg";
 import type { DashboardStats, UserSummary } from "@fee/shared";
 import { rupeesToPaise } from "./lib/validation";
-import { apiFetch, ApiError } from "./lib/api";
+import { systemPickerActive } from "./local/lockState";
+import BackupPanel from "./local/BackupPanel";
+import { runBilling } from "./local/api";
+import { apiFetch, ApiError } from "./local/api";
 import { clearSession, loadSession, saveSession, Session } from "./lib/session";
 import {
   Button,
@@ -75,7 +78,7 @@ const tabs = [
   "Members",
   "Groups",
   "Transactions",
-  "Finance",
+
   "Settings",
 ];
 function App() {
@@ -194,6 +197,7 @@ function App() {
     setBootError("");
     setBoot(true);
     try {
+      await runBilling();
       const saved = await loadSession();
       if (saved) {
         await apiFetch("/v1/auth/me", { token: saved.token });
@@ -210,7 +214,14 @@ function App() {
     void restore();
   }, []);
   useEffect(() => {
+    let backgrounded=false;
     const sub = AppState.addEventListener("change", (state) => {
+      if(state==="background")backgrounded=true;
+      if(state==="active" && backgrounded && auth.current && !systemPickerActive()){backgrounded=false;void logout();return;}
+      if (state === "background" && auth.current && !systemPickerActive()) {
+        void logout();
+        return;
+      }
       if (state === "active" && auth.current)
         void apiFetch("/v1/auth/me", { token: auth.current.token }).catch(
           (e) => {
@@ -250,6 +261,7 @@ function App() {
     }
   }
   async function refresh() {
+    await runBilling();
     if (!auth.current) return;
     const id = ++seq.current;
     setRefreshing(true);
@@ -409,8 +421,7 @@ function App() {
               />
             </Card>
             <Text style={styles.sub}>
-              Notifications are paused during provider review. Payments are
-              verified by authorised staff.
+              Single-device storage. All records stay on this phone. Payments are verified by authorised staff.
             </Text>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -471,7 +482,7 @@ function App() {
             <>
               <Heading
                 title="Keep things flowing."
-                sub="Create a request, share a link, or show a UPI QR."
+                sub="Create a request, share a UPI request, or show a UPI QR."
               />
               <Card>
                 {branches.map((b) => (
@@ -562,7 +573,7 @@ function App() {
                       {pay.checkoutUrl}
                     </Text>
                     <Button
-                      title="Share payment link"
+                      title="Share UPI payment request"
                       onPress={() =>
                         void act(async () => {
                           await Share.share({ message: pay.checkoutUrl });
@@ -994,19 +1005,6 @@ function App() {
                         }}
                       />
                     )}
-                  {financeRole && b.paidPaise > 0 && (
-                    <Button
-                      title="Request refund review"
-                      secondary
-                      onPress={() => {
-                        setVerifyBill(null);
-                        setRefundReason("");
-                        setTab("Finance");
-                        setReference(b.id);
-                        setAmount((b.paidPaise / 100).toFixed(2));
-                      }}
-                    />
-                  )}
                 </Card>
               ))}
               {!bills.length && !refreshing && (
@@ -1014,142 +1012,15 @@ function App() {
               )}
             </>
           )}
-          {tab === "Finance" && financeRole && (
-            <>
-              <Heading
-                title="Finance workspace."
-                sub="Requests and review only. No automatic refunds or payouts are connected."
-              />
-              <Card>
-                <Text style={styles.label}>Refund request</Text>
-                <Field
-                  label="Bill ID"
-                  value={reference}
-                  onChangeText={setReference}
-                />
-                <Field
-                  label="Refund amount (₹)"
-                  value={amount}
-                  onChangeText={setAmount}
-                  keyboardType="decimal-pad"
-                />
-                <Field
-                  label="Refund reason"
-                  value={refundReason}
-                  onChangeText={setRefundReason}
-                />
-                <Button
-                  title="Submit refund for review"
-                  busy={busy}
-                  disabled={!reference || !refundReason || Number(amount) <= 0}
-                  onPress={() =>
-                    void act(async () => {
-                      const body = {
-                        billId: reference,
-                        amountPaise: rupeesToPaise(amount),
-                        reason: refundReason,
-                      };
-                      await request("/v1/refunds", "POST", body, keyFor(body));
-                      setNotice(
-                        "Refund requested for review. No money has been sent.",
-                      );
-                      await refresh();
-                    })
-                  }
-                />
-              </Card>
-              {finance.refunds.map((r) => (
-                <Card key={r.id}>
-                  <Text>
-                    {money(r.amountPaise)} · {r.status}
-                  </Text>
-                  <Text>{r.reason}</Text>
-                </Card>
-              ))}
-              <Card>
-                <Text style={styles.label}>Bank destination review</Text>
-                <Field
-                  label="Bank account last four digits"
-                  value={bankMask}
-                  onChangeText={setBankMask}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                />
-                <Field
-                  label="IFSC"
-                  value={ifsc}
-                  onChangeText={setIfsc}
-                  autoCapitalize="characters"
-                />
-                <Button
-                  title="Request destination review"
-                  disabled={
-                    !session.user.roles.includes("OWNER" as never) ||
-                    bankMask.length !== 4 ||
-                    !ifsc
-                  }
-                  busy={busy}
-                  onPress={() =>
-                    void act(async () => {
-                      await request("/v1/destinations", "POST", {
-                        lastFour: bankMask,
-                        ifsc,
-                      });
-                      setBankMask("");
-                      setIfsc("");
-                      await refresh();
-                    })
-                  }
-                />
-              </Card>
-              {finance.destinations.map((d) => (
-                <Card key={d.id}>
-                  <Text>
-                    {d.maskedValue} · {d.status}
-                  </Text>
-                  <Text style={styles.sub}>
-                    Not provider-verified. Cannot receive payouts.
-                  </Text>
-                  {session.user.roles.some((r) =>
-                    ["OWNER", "FINANCE"].includes(r),
-                  ) &&
-                    d.requestedBy !== session.user.id &&
-                    d.status === "REQUESTED" && (
-                      <Button
-                        title="Approve review (verification still required)"
-                        secondary
-                        onPress={() =>
-                          void act(async () => {
-                            await request(
-                              `/v1/destinations/${d.id}/approve`,
-                              "POST",
-                              {},
-                            );
-                            await refresh();
-                          })
-                        }
-                      />
-                    )}
-                </Card>
-              ))}
-              {finance.settlements.map((s) => (
-                <Card key={s.id}>
-                  <Text>
-                    {s.reportingDate} · {s.status} · {money(s.netPaise)}
-                  </Text>
-                </Card>
-              ))}
-              {!finance.settlements.length && (
-                <Text style={styles.sub}>
-                  No settlement batches. Direct UPI funds go directly to the
-                  receiving account.
-                </Text>
-              )}
-            </>
-          )}
           {tab === "Settings" && (
             <>
               <Heading title="Your workspace." />
+              {session.user.roles.includes("OWNER" as never) && (
+                <BackupPanel
+                  token={session.token}
+                  onRestore={() => void logout()}
+                />
+              )}
               <Card>
                 <Text style={styles.label}>{session.user.name}</Text>
                 <Text style={styles.sub}>
@@ -1172,8 +1043,7 @@ function App() {
                   />
                 ))}
                 <Text style={styles.sub}>
-                  Notifications paused. No bank or provider tokens are stored on
-                  this phone.
+                  Single-device mode. Support: harshithhari.bh@gmail.com. No cloud connection.
                 </Text>
                 <Button
                   title="Sign out and clear this device"
