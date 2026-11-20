@@ -1,4 +1,4 @@
-import {exportEncrypted,restoreEncrypted} from "./backupService";
+import { exportEncrypted, restoreEncrypted } from "./backupService";
 import React, { useState } from "react";
 import { Alert, Text, View } from "react-native";
 import * as Crypto from "expo-crypto";
@@ -17,6 +17,7 @@ export default function BackupPanel({
   token: string;
   onRestore: () => void;
 }) {
+  const [administrator, setAdministrator] = useState(false);
   const [password, setPassword] = useState(""),
     [passphrase, setPassphrase] = useState(""),
     [confirm, setConfirm] = useState(""),
@@ -47,7 +48,7 @@ export default function BackupPanel({
     const user = await authorised();
     if (passphrase !== confirm)
       throw new Error("Backup passphrases do not match.");
-    const text=await exportEncrypted(token,password,passphrase);
+    const text = await exportEncrypted(token, password, passphrase);
     const file = new File(Paths.cache, `Feeflow-${Date.now()}.feeflow`);
     try {
       file.write(text);
@@ -91,7 +92,7 @@ export default function BackupPanel({
     const file = new File(picked.assets[0].uri);
     try {
       if (file.size > 40_000_000) throw new Error("Backup file is too large.");
-      await restoreEncrypted(token,password,passphrase,await file.text());
+      await restoreEncrypted(token, password, passphrase, await file.text());
       lock();
       setPassphrase("");
       setConfirm("");
@@ -159,32 +160,46 @@ export default function BackupPanel({
           {message}
         </Text>
       )}
-      <Text style={styles.label}>Add collector account</Text>
+      <Text style={styles.label}>Add staff account</Text>
       <Text style={styles.sub}>
-        Collectors can create requests and view records, but cannot verify
-        payments, administer accounts or export/import backups.
+        Staff can add members, create payment requests and send reminders.
+        Owners manage concessions, groups, verified payments and backups.
       </Text>
-      <Field label="Collector name" value={name} onChangeText={setName} />
+      <Field label="Staff name" value={name} onChangeText={setName} />
       <Field
-        label="Collector email"
+        label="Staff email"
         autoCapitalize="none"
         value={email}
         onChangeText={setEmail}
       />
       <Field
-        label="Collector password (10+ characters)"
+        label="Staff password (10+ characters)"
         secureTextEntry
         value={staffPassword}
         onChangeText={setStaffPassword}
       />
       <Button
-        title="Create collector"
+        title={
+          administrator ? "Access level: Administrator" : "Access level: Staff"
+        }
+        secondary
+        onPress={() => setAdministrator(!administrator)}
+      />
+      <Button
+        title="Create staff account"
         busy={busy}
         disabled={!password || !name || !email || staffPassword.length < 10}
         onPress={() =>
           void action(async () => {
             await authorised();
-            await tx(() => createUser(email, name, staffPassword, "COLLECTOR"));
+            await tx(() =>
+              createUser(
+                email,
+                name,
+                staffPassword,
+                administrator ? "BRANCH_MANAGER" : "COLLECTOR",
+              ),
+            );
             setEmail("");
             setName("");
             setStaffPassword("");

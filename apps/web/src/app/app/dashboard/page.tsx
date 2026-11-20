@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { getToken } from "@/lib/auth";
+import { getToken, getUser, isDeviceWorkspace } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import type { DashboardStats } from "@fee/shared";
 
@@ -12,12 +12,21 @@ function fmt(paise: number) {
 }
 
 export default function DashboardPage() {
+  const restaurant = getUser()?.profile === "RESTAURANT";
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    apiFetch<DashboardStats>("/v1/dashboard", { token: getToken()! })
+    const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const day =
+      restaurant && !isDeviceWorkspace()
+        ? "?dateFrom=" +
+          encodeURIComponent(today + "T00:00:00+05:30") +
+          "&dateTo=" +
+          encodeURIComponent(today + "T23:59:59.999+05:30")
+        : "";
+    apiFetch<DashboardStats>("/v1/dashboard" + day, { token: getToken()! })
       .then(setStats)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -37,6 +46,7 @@ export default function DashboardPage() {
     );
   if (!stats) return null;
 
+  const local = isDeviceWorkspace();
   const tiles = [
     {
       label: "Collected",
@@ -60,7 +70,7 @@ export default function DashboardPage() {
     },
     { label: "Held", value: fmt(stats.heldPaise), color: "var(--text-muted)" },
     { label: "Settled", value: fmt(stats.settledPaise), color: "var(--text)" },
-  ];
+  ].slice(0, local ? 2 : 6);
 
   return (
     <div className="page">
@@ -81,7 +91,8 @@ export default function DashboardPage() {
       <div
         style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}
       >
-        Last 30 days · {stats.dateBasis.replace("_", " ").toLowerCase()}
+        {restaurant ? "Today · IST" : local ? "All records" : "Last 30 days"} ·{" "}
+        {stats.dateBasis.replace("_", " ").toLowerCase()}
       </div>
       <div className="stat-grid">
         {tiles.map((t) => (

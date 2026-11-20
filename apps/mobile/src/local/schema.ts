@@ -48,7 +48,7 @@ export function validateSnapshot(value: unknown): Snapshot {
       typeof u.email !== "string" ||
       u.email !== u.email.trim().toLowerCase() ||
       emails.has(u.email) ||
-      !["OWNER", "COLLECTOR"].includes(u.role) ||
+      !["OWNER", "BRANCH_MANAGER", "COLLECTOR"].includes(u.role) ||
       !/^([0-9a-f]{64})$/.test(u.hash) ||
       !/^([0-9a-f]{32})$/.test(u.salt)
     )
@@ -69,7 +69,10 @@ export function validateSnapshot(value: unknown): Snapshot {
   for (const b of d.tables.bills) {
     if (
       !Number.isSafeInteger(b.amountPaise) ||
-      b.amountPaise <= 0 ||
+      b.amountPaise < 0 ||
+      (b.amountPaise === 0 &&
+        b.status !== "WAIVED" &&
+        !(b.planned && b.status === "DRAFT")) ||
       !Number.isSafeInteger(b.paidPaise) ||
       b.paidPaise < 0 ||
       b.paidPaise > b.amountPaise ||

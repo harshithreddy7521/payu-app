@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { requireAuth, requireRoles } from "../middleware/auth.js";
+import { requireAuth, requireRoles, branchScope } from "../middleware/auth.js";
 import { memberCsv } from "../lib/csv.js";
 import { Err, UserRole } from "@fee/shared";
 
@@ -77,21 +77,110 @@ export async function memberRoutes(app: FastifyInstance) {
       cursor,
       limit = "50",
       q,
-    } = req.query as { cursor?: string; limit?: string; q?: string };
+      lookup,
+    } = req.query as {
+      cursor?: string;
+      limit?: string;
+      q?: string;
+      lookup?: string;
+    };
     const members = await prisma.member.findMany({
       where: {
         orgId: user.orgId,
         status: "ACTIVE",
-        ...(q && { name: { contains: q, mode: "insensitive" } }),
+        ...(q && {
+          OR: [
+            { name: { contains: q, mode: "insensitive" } },
+            { externalRef: { contains: q, mode: "insensitive" } },
+            { guardians: { some: { phone: { contains: q } } } },
+          ],
+        }),
       },
       include: { guardians: true },
       take: Math.max(1, Math.min(100, Number(limit) || 50)),
       ...(cursor && { cursor: { id: cursor }, skip: 1 }),
       orderBy: { createdAt: "desc" },
     });
-    return { data: members, meta: { cursor: members[members.length - 1]?.id } };
+    if (lookup === "1")
+      return {
+        data: members.map(({ id, name, externalRef }) => ({
+          id,
+          name,
+          externalRef,
+        })),
+      };
+    const grouped = await prisma.bill.groupBy({
+      by: ["memberId", "status"],
+      where: {
+        ...branchScope(user),
+        memberId: { in: members.map((member) => member.id) },
+      },
+      _sum: { amountPaise: true, paidPaise: true },
+    });
+    const totals = new Map<
+      string,
+      { paidPaise: number; duePaise: number; remainingPaise: number }
+    >();
+    for (const row of grouped) {
+      if (!row.memberId) continue;
+      const total = totals.get(row.memberId) ?? {
+        paidPaise: 0,
+        duePaise: 0,
+        remainingPaise: 0,
+      };
+      const paid = row._sum.paidPaise ?? 0;
+      total.paidPaise += paid;
+      if (["ISSUED", "PARTIAL", "EXPIRED"].includes(row.status)) {
+        const due = Math.max(0, (row._sum.amountPaise ?? 0) - paid);
+        total.duePaise += due;
+        total.remainingPaise += due;
+      }
+      totals.set(row.memberId, total);
+    }
+    return {
+      data: members.map((member) => ({
+        ...member,
+        totals: totals.get(member.id) ?? {
+          paidPaise: 0,
+          duePaise: 0,
+          remainingPaise: 0,
+        },
+      })),
+      meta: { cursor: members[members.length - 1]?.id },
+    };
   });
 
+  app.get("/:id/balance", { preHandler: [requireAuth] }, async (req) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
+    const member = await prisma.member.findFirst({
+      where: { id, orgId: req.user.orgId },
+      select: { id: true, name: true },
+    });
+    if (!member) throw Err.notFound("Member");
+    const bills = await prisma.bill.findMany({
+      where: { ...branchScope(req.user), memberId: id },
+      select: {
+        id: true,
+        amountPaise: true,
+        paidPaise: true,
+        purpose: true,
+        status: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const totals = bills.reduce(
+      (total, bill) => {
+        total.paidPaise += bill.paidPaise;
+        if (["ISSUED", "PARTIAL", "EXPIRED"].includes(bill.status)) {
+          total.duePaise += Math.max(0, bill.amountPaise - bill.paidPaise);
+          total.remainingPaise = total.duePaise;
+        }
+        return total;
+      },
+      { paidPaise: 0, duePaise: 0, remainingPaise: 0 },
+    );
+    return { name: member.name, totals, bills };
+  });
   app.post(
     "/",
     { preHandler: [requireRoles(UserRole.OWNER, UserRole.BRANCH_MANAGER)] },

@@ -1,13 +1,19 @@
 "use client";
+import MemberPayments, { formatMoney } from "@/components/MemberPayments";
+import type { MemberTotals } from "../../../../../mobile/src/local/memberBalance";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getToken } from "@/lib/auth";
+import { getToken, getUser, isDeviceWorkspace } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 type Member = {
   id: string;
   name: string;
   externalRef?: string;
   status: string;
+  totals?: MemberTotals;
+  feePaise?: number;
+  hostelFeePaise?: number;
+  concessionPercent?: number;
   guardians: {
     id: string;
     name: string;
@@ -24,6 +30,29 @@ type ImportRow = {
   errors: string[];
 };
 export default function MembersPage() {
+  const fees = isDeviceWorkspace() && getUser()?.profile !== "RESTAURANT";
+  const owner = getUser()?.roles.some((role) =>
+    ["OWNER", "BRANCH_MANAGER"].includes(role),
+  );
+  const [paymentMember, setPaymentMember] = useState<{
+    id: string;
+    name: string;
+    bill?: string;
+    amountPaise?: number;
+  }>();
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("member");
+    if (id)
+      setPaymentMember({
+        id,
+        name: params.get("name") || "Member",
+        bill: params.get("bill") ?? undefined,
+        amountPaise: Number(params.get("amountPaise")) || undefined,
+      });
+  }, []);
+  const [feeMember, setFeeMember] = useState<Member>();
+  const [concession, setConcession] = useState("");
   const [members, setMembers] = useState<Member[]>([]),
     [q, setQ] = useState(""),
     [error, setError] = useState(""),
@@ -135,6 +164,63 @@ export default function MembersPage() {
         <p className="success-msg" role="status">
           {notice}
         </p>
+      )}
+      {paymentMember && (
+        <MemberPayments
+          key={paymentMember.id}
+          memberId={paymentMember.id}
+          name={
+            members.find((member) => member.id === paymentMember.id)?.name ??
+            paymentMember.name
+          }
+          requestedBill={paymentMember.bill}
+          requestedAmount={paymentMember.amountPaise}
+          close={() => setPaymentMember(undefined)}
+          onSaved={() => void load()}
+        />
+      )}
+      {fees && feeMember && owner && (
+        <form
+          className="card form-card"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            try {
+              await apiFetch(`/v1/members/${feeMember.id}/fees`, {
+                method: "PUT",
+                token: getToken()!,
+                body: JSON.stringify({ concessionPercent: Number(concession) }),
+              });
+              setFeeMember(undefined);
+              setNotice("Concession saved.");
+              await load();
+            } catch (error) {
+              setError((error as Error).message);
+            }
+          }}
+        >
+          <h2 className="form-title">{feeMember.name} · Concession</h2>
+          <label className="field">
+            <span className="label">Concession (%)</span>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              value={concession}
+              onChange={(e) => setConcession(e.target.value)}
+              required
+            />
+          </label>
+          <button className="btn btn-primary">Save concession</button>
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => setFeeMember(undefined)}
+          >
+            Cancel
+          </button>
+        </form>
       )}
       {contact && (
         <form
@@ -275,6 +361,9 @@ export default function MembersPage() {
                 <th>Reference</th>
                 <th>Guardian</th>
                 <th>Contact</th>
+                <th>Paid</th>
+                <th>Due now</th>
+                <th>Total remaining</th>
                 <th>Status</th>
                 <th>Manage</th>
               </tr>
@@ -282,7 +371,7 @@ export default function MembersPage() {
             <tbody>
               {!members.length && (
                 <tr>
-                  <td colSpan={6} className="empty-state">
+                  <td colSpan={9} className="empty-state">
                     Your community starts here. Add your first member.
                   </td>
                 </tr>
@@ -293,6 +382,29 @@ export default function MembersPage() {
                     <span className="member-name">
                       <span className="member-dot">{m.name.slice(0, 1)}</span>
                       {m.name}
+                      {fees && (
+                        <div>
+                          {m.feePaise
+                            ? `₹${(m.feePaise / 100).toLocaleString("en-IN")} tuition · `
+                            : ""}
+                          {m.hostelFeePaise
+                            ? `₹${(m.hostelFeePaise / 100).toLocaleString("en-IN")} hostel · `
+                            : ""}
+                          {m.concessionPercent ?? 0}% concession
+                          {owner && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => {
+                                setFeeMember(m);
+                                setConcession(String(m.concessionPercent ?? 0));
+                              }}
+                            >
+                              Edit concession
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </span>
                   </td>
                   <td>{m.externalRef || "—"}</td>
@@ -300,10 +412,23 @@ export default function MembersPage() {
                   <td>
                     {m.guardians[0]?.phone.replace(/.(?=.{4})/g, "•") || "—"}
                   </td>
+                  <td>{formatMoney(m.totals?.paidPaise ?? 0)}</td>
+                  <td>{formatMoney(m.totals?.duePaise ?? 0)}</td>
+                  <td>{formatMoney(m.totals?.remainingPaise ?? 0)}</td>
                   <td>
                     <span className="badge badge-success">Active</span>
                   </td>
                   <td>
+                    <button
+                      className="btn btn-ghost"
+                      type="button"
+                      onClick={() => {
+                        setPaymentMember({ id: m.id, name: m.name });
+                        window.scrollTo({ top: 0, behavior: "smooth" });
+                      }}
+                    >
+                      Payments
+                    </button>
                     {m.guardians[0] && (
                       <button
                         className="btn btn-ghost"

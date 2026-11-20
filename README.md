@@ -139,7 +139,82 @@ npm run android    # requires Android emulator
 npm run ios        # requires macOS + Xcode
 ```
 
-## Temporary direct UPI collection
+## Workspace signup and Google Drive storage
+
+Open [signup on port 3000](http://localhost:3000/signup), or choose
+**Create a workspace** on Android. Complete the workspace and administrator
+details, then choose **Google Drive** under **Storage**. A browser profile stores
+one Feeflow workspace. Use another profile to create or restore a separate workspace.
+
+### Create the Google service account and spreadsheet
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), select or
+   create a project. Open **APIs & Services → Library** and enable **Google Drive
+   API** and **Google Sheets API** in that project. [Enable Google Workspace APIs](https://developers.google.com/workspace/guides/enable-apis)
+2. In the same project, open **IAM & Admin → Service Accounts → Create service
+   account**. Give it a name such as `feeflow-storage`. Skip the optional project
+   roles and copy the account email ending in `.iam.gserviceaccount.com`.
+   [Create a Google service account](https://docs.cloud.google.com/iam/docs/service-accounts-create)
+3. Open the service account and select **Keys → Add key → Create new key →
+   JSON → Create**. Google downloads a JSON file containing the private key.
+   Store the file securely and keep it out of the repository. If an organization
+   policy blocks key creation, ask your Google Cloud administrator whether an
+   exception is permitted for this project. [Create a JSON key](https://docs.cloud.google.com/iam/docs/keys-create-delete)
+4. Create a blank Google Sheets spreadsheet in Drive. The spreadsheet file name
+   can be anything. Name the worksheet tab exactly `Feeflow`. From **Share**,
+   add the service account email as an **Editor** and keep **General access**
+   set to **Restricted**. [Share a file with a service account](https://developers.google.com/workspace/guides/create-credentials)
+
+### Fill in the signup form and verify the backup
+
+| Signup field | Value |
+| --- | --- |
+| Google spreadsheet ID | Copy the part between `/d/` and `/edit` in the spreadsheet URL. |
+| Google service-account JSON key | Paste the entire contents of the downloaded JSON file. |
+| Cloud backup passphrase | Choose a passphrase of at least 12 characters. Keep it separately from the administrator password and JSON key. |
+| Existing cloud workspace ID | Leave blank for a new workspace. Enter the ID from **Settings** only when restoring an existing workspace. |
+
+Create the account, sign in as the owner, then open **Settings → Sync Google Drive
+now**. Confirm the app reports **Synced to Google Drive** or **Google Drive is up
+to date**. Save the **Cloud workspace ID** displayed in Settings. The sheet
+contains encrypted snapshots. Use Feeflow to view or edit records.
+
+The web console exchanges the service-account key for a short-lived Google
+access token. Feeflow encrypts the stored key locally with the administrator
+password. Sync runs on owner sign-in and hourly while the workspace is open.
+To restore on a fresh Android installation or browser profile, choose **Google
+Drive** during signup and provide the workspace ID, the original administrator
+credentials, the same Google credentials, and the backup passphrase. If two
+devices edit offline before syncing, the app preserves both versions and reports
+a conflict.
+
+For Android, set `EXPO_PUBLIC_WEB_URL` to the deployed web console’s HTTPS origin
+before building the APK. A local-only APK can leave it empty. For hosted web
+checkout, set `WEB_URL` and `NEXT_PUBLIC_API_URL` to the public HTTPS addresses
+of the console and API.
+
+## WhatsApp, reminders and billing jobs
+
+The existing web console serves both hosted accounts and new device or Google
+Drive accounts. It includes the dashboard, member and guardian management, CSV
+import, groups, fee overrides, recurring billing, reminders, and transactions
+with receipt recording and CSV export. Android also offers WhatsApp drafts,
+guardian consent, reminder policies and a manual billing job.
+
+For device or Google Drive accounts, billing catches up when you open the
+workspace. Both clients also check hourly while the workspace is open. To run the job
+manually, open **Reminders → Check eligible billing**. Ready WhatsApp drafts
+respect guardian permission, IST sending hours and the daily cap. A staff member
+opens the draft and sends it from WhatsApp. Deploy the web console over HTTPS and
+configure the Android public web URL to share a browser-friendly direct UPI
+checkout in the message.
+
+Existing hosted accounts retain their database-backed worker, provider queues
+and finance review. Provider dispatch remains controlled by
+`NOTIFICATIONS_ENABLED` and currently uses the fake provider. Hosted Quick Pay
+also offers a manual WhatsApp draft for actual sending.
+
+## Existing hosted workspace and direct UPI collection
 
 `PAYMENT_PROVIDER=manual-upi` is now the default and uses `7090832433@ybl`.
 Change `UPI_PAYEE_VPA` in `apps/api/.env` when the company VPA is ready.
@@ -251,3 +326,54 @@ admin-only encrypted backup/restore. No API configuration is needed for this
 edition. See [offline Android setup](docs/android-offline.md). Existing server
 data is preserved but not automatically copied to a phone. Notifications and
 cloud-dependent finance actions are unavailable in the local edition.
+
+## Workspace profiles, roles and password recovery
+
+Choose School, Sports complex, or Restaurant at signup. After setup, the app
+uses the workspace’s name. The owner can create administrator and staff
+accounts. Administrators manage groups, tuition settings and concessions.
+Staff can enter members and prepare eligible WhatsApp reminders. Only the owner
+can manage access, backups and verified payment recording.
+
+Schools can set standard tuition per billing cycle in Settings and record
+optional hostel fees per student. School and sports concessions are whole
+percentages from 0 to 100. Concessions reduce tuition or sports fees while
+hostel charges remain separate. Monthly, quarterly and yearly groups issue
+bills and schedule WhatsApp reminders for each cycle. A reminder uses the
+outstanding balance after the concession and recorded payments.
+
+For email recovery, configure an HTTPS `FEEFLOW_PUBLIC_URL`, verified
+`FEEFLOW_RESET_FROM`, `RESEND_API_KEY` and a unique `FEEFLOW_RESET_SECRET` in the
+web deployment. Android also needs `EXPO_PUBLIC_WEB_URL`. Request the link on the
+device where the account is stored. In the browser, open it in the browser that
+requested the reset. On Android, paste it into the app’s reset form. Cloud owners
+also enter their Google Drive backup passphrase. Owners of older Google Drive
+workspaces need one successful sign-in to enable recovery. Existing server-hosted
+accounts use their existing authentication flow.
+
+## Class plans, sports memberships and restaurant Quick Pay
+
+For a device or Google Drive school workspace, create a class with an academic
+start month, annual tuition, optional hostel fees and named charges. Mark charges
+as required or optional. Books, admission, registration, kits and uniforms are
+due at enrollment. At enrollment select the class, optional charges and monthly,
+quarterly or full payment. New class plans use the class fees rather than the
+legacy individual tuition field. A student can have one planned class per
+academic year. A late enrollment uses the class's annual schedule, so any
+scheduled installments already due are included in the first balance.
+
+Concessions apply to tuition or the sports program fee. A monthly reminder shows
+the balance after verified payments, including unpaid upfront charges and prior
+installments. Quarterly installments only add a charge each quarter. Full payment
+makes the fee due in one installment. Advance payments reduce future balances.
+Open Reminders to review and send the prepared drafts through WhatsApp.
+
+Sports complexes can create a renewable program or a fixed-term coaching program.
+Renewals open seven days before expiry. Access is marked paused once the paid
+period ends, and additional renewal charges wait until the open one is paid.
+Fixed-term plans retain unpaid installments. Renewable membership fees are per
+term, and registration or kit charges apply to the initial period.
+
+Restaurants start in Quick Pay with an optional table or order reference.
+Transactions and settings remain available, and owners can view today's
+collections in IST. Existing groups keep their original billing rules.

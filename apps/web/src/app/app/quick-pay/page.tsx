@@ -1,26 +1,65 @@
 "use client";
+import MemberPicker, { type PickedMember } from "@/components/MemberPicker";
+import {
+  payable,
+  remaining,
+  type BalanceBill,
+} from "../../../../../mobile/src/local/memberBalance";
 import { useState, useEffect, useRef } from "react";
-import { getToken, getUser } from "@/lib/auth";
+import QRCode from "qrcode";
+import { whatsappPayment } from "../../../../../mobile/src/local/whatsapp";
+import {
+  upiUrl,
+  validVpa,
+  type SchoolProfile,
+} from "../../../../../mobile/src/local/onboarding";
+import { getToken, getUser, isDeviceWorkspace } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import type { QuickPayResponse, UserSummary } from "@fee/shared";
 import { MessageChannel } from "@fee/shared";
 
 type Branch = { id: string; name: string };
 
+function shareableCheckout(value: string) {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export default function QuickPayPage() {
+  const [schoolQr, setSchoolQr] = useState("");
+  const [schoolUpi, setSchoolUpi] = useState("");
+  const local = isDeviceWorkspace();
+  const restaurant = getUser()?.profile === "RESTAURANT";
   const requestRef = useRef<{ body: string; key: string } | null>(null);
   const [consent, setConsent] = useState(false);
   const [user, setUser] = useState<UserSummary | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
   const [amount, setAmount] = useState("");
+  const [member, setMember] = useState<PickedMember>();
+  const [memberBills, setMemberBills] = useState<BalanceBill[]>([]);
+  const [existingBillId, setExistingBillId] = useState("");
+  const [loadingBalance, setLoadingBalance] = useState(false);
   const [purpose, setPurpose] = useState("");
   const [phone, setPhone] = useState("");
-  const [channel, setChannel] = useState<"" | MessageChannel>("");
+  const [channel, setChannel] = useState<
+    "" | "MANUAL_WHATSAPP" | MessageChannel
+  >("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<
-    | (QuickPayResponse & { qrCodeDataUrl?: string; upiIntentUrl?: string })
+    | (QuickPayResponse & {
+        qrCodeDataUrl?: string;
+        upiIntentUrl?: string;
+        whatsappUrl?: string;
+      })
     | null
   >(null);
   const [copied, setCopied] = useState(false);
@@ -29,6 +68,16 @@ export default function QuickPayPage() {
     const u = getUser();
     setUser(u);
     if (!u) return;
+    if (u.orgId === "local") {
+      apiFetch<SchoolProfile>("/v1/local/profile", { token: getToken()! })
+        .then(async (school) => {
+          if (!validVpa(school.vpa)) return;
+          const intent = upiUrl(school.vpa, school.name);
+          setSchoolUpi(intent);
+          setSchoolQr(await QRCode.toDataURL(intent));
+        })
+        .catch((e) => setError(e.message));
+    }
     apiFetch<{ data: Branch[] }>("/v1/branches", { token: getToken()! })
       .then(({ data }) => {
         setBranches(data);
@@ -40,6 +89,51 @@ export default function QuickPayPage() {
       .catch((e) => setError(e.message));
   }, []);
 
+  function chooseBill(bill?: BalanceBill) {
+    setExistingBillId(bill?.id ?? "");
+    if (!bill) {
+      setPurpose("");
+      setAmount("");
+      return;
+    }
+    setPurpose(bill.purpose);
+    setAmount(
+      ((bill.amountPaise - bill.paidPaise || remaining(bill)) / 100).toFixed(2),
+    );
+  }
+
+  useEffect(() => {
+    setMemberBills([]);
+    if (!local || !member) {
+      setLoadingBalance(false);
+      return;
+    }
+    let active = true;
+    setLoadingBalance(true);
+    void apiFetch<{ bills: BalanceBill[] }>(
+      `/v1/members/${member.id}/balance`,
+      { token: getToken()! },
+    )
+      .then(({ bills }) => {
+        if (!active) return;
+        const open = bills.filter(
+          (bill) => payable(bill) && remaining(bill) > 0,
+        );
+        setMemberBills(open);
+        const due = open.find((bill) => bill.amountPaise > bill.paidPaise);
+        if (due) chooseBill(due);
+      })
+      .catch((error) => {
+        if (active) setError(error.message);
+      })
+      .finally(() => {
+        if (active) setLoadingBalance(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [member, local]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -49,12 +143,17 @@ export default function QuickPayPage() {
       setError("Enter a valid amount");
       return;
     }
+    if (loadingBalance) return;
     if (!branchId) {
       setError("Select a branch");
       return;
     }
-    if (!purpose.trim()) {
+    if (!restaurant && !purpose.trim()) {
       setError("Enter a purpose");
+      return;
+    }
+    if (channel && (!consent || !/^(?:\+91)?[6-9]\d{9}$/.test(phone.trim()))) {
+      setError("Enter a valid mobile number and confirm WhatsApp permission.");
       return;
     }
     setLoading(true);
@@ -66,11 +165,17 @@ export default function QuickPayPage() {
         phone,
         channel,
         consent,
+        memberId: member?.id,
+        existingBillId,
       });
       if (requestRef.current?.body !== fingerprint)
         requestRef.current = { body: fingerprint, key: crypto.randomUUID() };
       const res = await apiFetch<
-        QuickPayResponse & { qrCodeDataUrl?: string; upiIntentUrl?: string }
+        QuickPayResponse & {
+          qrCodeDataUrl?: string;
+          upiIntentUrl?: string;
+          whatsappUrl?: string;
+        }
       >("/v1/quick-pay", {
         method: "POST",
         headers: { "Idempotency-Key": requestRef.current!.key },
@@ -78,16 +183,24 @@ export default function QuickPayPage() {
         body: JSON.stringify({
           amountPaise: paise,
           branchId,
-          purpose: purpose.trim(),
-          recipientPhone: phone || undefined,
-          deliveryChannel: channel || undefined,
+          purpose: purpose.trim() || "Counter payment",
+          recipientPhone: phone.trim() || undefined,
+          deliveryChannel:
+            channel === "MANUAL_WHATSAPP" ? undefined : channel || undefined,
           deliveryConsent: consent,
-          isGuest: !phone,
+          memberId: member?.id,
+          existingBillId: existingBillId || undefined,
+          isGuest: !member && !phone,
+          ...(local ? { webOrigin: window.location.origin } : {}),
         }),
       });
       setResult(res);
-      // Fetch QR from checkout
-      if (res.paymentLinkToken) {
+      if (local && res.upiIntentUrl) {
+        setResult({
+          ...res,
+          qrCodeDataUrl: await QRCode.toDataURL(res.upiIntentUrl),
+        });
+      } else if (res.paymentLinkToken) {
         const checkout = await apiFetch<{
           qrCodeDataUrl?: string;
           upiIntentUrl?: string;
@@ -102,6 +215,18 @@ export default function QuickPayPage() {
                   ...r,
                   qrCodeDataUrl: checkout.qrCodeDataUrl,
                   upiIntentUrl: checkout.upiIntentUrl,
+                  whatsappUrl:
+                    channel === "MANUAL_WHATSAPP" &&
+                    consent &&
+                    checkout.upiIntentUrl
+                      ? whatsappPayment(
+                          phone.trim(),
+                          checkout.upiIntentUrl,
+                          purpose.trim(),
+                          paise,
+                          window.location.origin,
+                        )
+                      : undefined,
                 }
               : r,
           );
@@ -128,7 +253,10 @@ export default function QuickPayPage() {
     setAmount("");
     setPurpose("");
     setPhone("");
+    setMember(undefined);
+    setExistingBillId("");
     setChannel("");
+    setConsent(false);
   }
 
   if (result) {
@@ -142,34 +270,49 @@ export default function QuickPayPage() {
             ₹{(parseFloat(amount) || 0).toLocaleString("en-IN")}
           </div>
           <div style={{ color: "var(--text-muted)", marginBottom: 20 }}>
-            {purpose}
+            {purpose || "Counter payment"}
+            {member && <div>{member.name}</div>}
           </div>
 
-          <div className="field">
-            <div className="label">Share link</div>
-            <div
-              className="link-box"
-              onClick={copyLink}
-              title="Click to copy"
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => e.key === "Enter" && copyLink()}
-            >
-              <span
-                style={{
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
+          {(local || shareableCheckout(result.checkoutUrl)) && (
+            <div className="field">
+              <div className="label">
+                {local ? "Share payment link" : "Share link"}
+              </div>
+              <div
+                className="link-box"
+                onClick={copyLink}
+                title="Click to copy"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => e.key === "Enter" && copyLink()}
               >
-                {result.checkoutUrl}
-              </span>
-              <span style={{ color: "var(--primary)", flexShrink: 0 }}>
-                {copied ? "Copied!" : "Copy"}
-              </span>
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {result.checkoutUrl}
+                </span>
+                <span style={{ color: "var(--primary)", flexShrink: 0 }}>
+                  {copied ? "Copied!" : "Copy"}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
 
+          {result.whatsappUrl && (
+            <a
+              className="btn btn-primary"
+              href={result.whatsappUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open WhatsApp to send
+            </a>
+          )}
           {result.upiIntentUrl && (
             <a className="btn btn-primary" href={result.upiIntentUrl}>
               Open UPI app
@@ -184,12 +327,17 @@ export default function QuickPayPage() {
           <div
             style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8 }}
           >
-            {user?.roles.some((role) =>
-              ["OWNER", "FINANCE"].includes(role),
-            ) && (
+            {((restaurant && local) ||
+              user?.roles.some((role) =>
+                ["OWNER", "FINANCE"].includes(role),
+              )) && (
               <a
                 className="btn btn-ghost"
-                href={`/app/transactions?verify=${encodeURIComponent(result.billId)}`}
+                href={
+                  member
+                    ? `/app/members?member=${encodeURIComponent(member.id)}&bill=${encodeURIComponent(result.billId)}&amountPaise=${Math.round(Number(amount) * 100)}`
+                    : `/app/transactions?verify=${encodeURIComponent(result.billId)}`
+                }
               >
                 Record verified payment
               </a>
@@ -239,6 +387,21 @@ export default function QuickPayPage() {
       </div>
       <div className="quick-grid">
         <div>
+          {local && (
+            <section className="card form-card">
+              <h2 className="form-title">Payment QR</h2>
+              {schoolQr ? (
+                <div className="qr-wrap">
+                  <img src={schoolQr} alt="UPI payment QR" />
+                  <a className="btn btn-ghost" href={schoolUpi}>
+                    Open UPI app
+                  </a>
+                </div>
+              ) : (
+                <p>Set your workspace’s UPI address in Settings.</p>
+              )}
+            </section>
+          )}
           <div className="card">
             <div className="section-heading">
               <div>
@@ -249,6 +412,44 @@ export default function QuickPayPage() {
             </div>
             <div className="form-card">
               <form onSubmit={handleSubmit}>
+                {!restaurant && (
+                  <MemberPicker
+                    value={member}
+                    onChange={(value) => {
+                      if (existingBillId) chooseBill();
+                      setLoadingBalance(Boolean(local && value));
+                      setMember(value);
+                    }}
+                  />
+                )}
+                {local && member && loadingBalance && (
+                  <p role="status">Loading member charges…</p>
+                )}
+                {local && member && memberBills.length > 0 && (
+                  <label className="field">
+                    <span className="label">Apply payment to</span>
+                    <select
+                      className="select"
+                      value={existingBillId}
+                      onChange={(event) =>
+                        chooseBill(
+                          memberBills.find(
+                            (bill) => bill.id === event.target.value,
+                          ),
+                        )
+                      }
+                    >
+                      <option value="">Create a new charge</option>
+                      {memberBills.map((bill) => (
+                        <option key={bill.id} value={bill.id}>
+                          {bill.purpose} · ₹
+                          {(remaining(bill) / 100).toLocaleString("en-IN")}{" "}
+                          remaining
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <div className="field">
                   <label className="label">Amount (₹)</label>
                   <div style={{ display: "flex", alignItems: "baseline" }}>
@@ -293,8 +494,12 @@ export default function QuickPayPage() {
                     className="input"
                     value={purpose}
                     onChange={(e) => setPurpose(e.target.value)}
-                    placeholder="e.g. Tuition fee — June 2026"
-                    required
+                    placeholder={
+                      restaurant
+                        ? "e.g. Table 4"
+                        : "e.g. Tuition fee — June 2026"
+                    }
+                    required={!restaurant}
                   />
                 </div>
 
@@ -306,7 +511,11 @@ export default function QuickPayPage() {
                     className="input"
                     type="tel"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => {
+                      setPhone(e.target.value);
+                      setConsent(false);
+                      if (!e.target.value) setChannel("");
+                    }}
                     placeholder="9876543210"
                   />
                 </div>
@@ -318,11 +527,26 @@ export default function QuickPayPage() {
                       className="select"
                       value={channel}
                       onChange={(e) =>
-                        setChannel(e.target.value as MessageChannel)
+                        setChannel(
+                          e.target.value as MessageChannel | "MANUAL_WHATSAPP",
+                        )
                       }
                     >
                       <option value="">Display QR only</option>
-                      <option value={MessageChannel.WHATSAPP}>WhatsApp</option>
+                      {local ? (
+                        <option value={MessageChannel.WHATSAPP}>
+                          WhatsApp
+                        </option>
+                      ) : (
+                        <>
+                          <option value="MANUAL_WHATSAPP">
+                            Open WhatsApp draft
+                          </option>
+                          <option value={MessageChannel.WHATSAPP}>
+                            Queue WhatsApp via provider
+                          </option>
+                        </>
+                      )}
                     </select>
                   </div>
                 )}
@@ -347,7 +571,7 @@ export default function QuickPayPage() {
                 <button
                   className="btn btn-primary"
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || loadingBalance}
                   style={{ width: "100%", justifyContent: "center" }}
                 >
                   {loading ? (

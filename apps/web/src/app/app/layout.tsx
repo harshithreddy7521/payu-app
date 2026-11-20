@@ -2,6 +2,9 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
+import { getDeviceSession } from "@/lib/device-store";
+import { runBilling } from "../../../../mobile/src/local/api";
+import { syncCloud } from "../../../../mobile/src/local/cloud";
 import { getToken, getUser, logout } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import Icon from "@/components/Icon";
@@ -13,7 +16,6 @@ const NAV = [
   ["Groups & billing", "groups", "groups"],
   ["Reminders", "reminders", "reminders"],
   ["Transactions", "transactions", "transactions"],
-  ["Settlements", "settlements", "settlements"],
   ["Finance review", "finance", "settlements"],
   ["Settings", "settings", "settings"],
 ];
@@ -26,8 +28,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     [menu, setMenu] = useState(false);
   useEffect(() => {
     const u = getUser();
-    if (!getToken() || !u) router.replace("/login");
-    else setUser(u);
+    if (
+      !getToken() ||
+      !u ||
+      (u.orgId === "local" && getDeviceSession()?.token !== getToken())
+    ) {
+      logout();
+      router.replace("/login");
+    } else setUser(u);
   }, [router]);
   useEffect(() => {
     if (!user) return;
@@ -38,7 +46,35 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       .then((r) => setBranches(r.data))
       .catch(() => {});
   }, [user]);
-  if (!user)
+  useEffect(() => {
+    if (user?.orgId !== "local") return;
+    const cloud = getDeviceSession()?.cloud;
+    const run = () =>
+      void runBilling()
+        .then(() => cloud && syncCloud(cloud))
+        .catch(() => {});
+    run();
+    const timer = window.setInterval(run, 3_600_000);
+    return () => window.clearInterval(timer);
+  }, [user]);
+  useEffect(() => {
+    if (user) document.title = user.orgName;
+    return () => {
+      document.title = "Feeflow";
+    };
+  }, [user]);
+  const restaurant = user?.profile === "RESTAURANT";
+  const restaurantOwner = user?.roles.some((role) => role === "OWNER");
+  const allowed =
+    !restaurant ||
+    ["/app/quick-pay", "/app/transactions", "/app/settings"].some((page) =>
+      path.startsWith(page),
+    ) ||
+    (restaurantOwner && path.startsWith("/app/dashboard"));
+  useEffect(() => {
+    if (!allowed) router.replace("/app/quick-pay");
+  }, [allowed, router]);
+  if (!user || !allowed)
     return (
       <div className="page" role="status">
         Opening your workspace…
@@ -51,26 +87,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </a>
       <aside className={`sidebar ${menu ? "is-open" : ""}`}>
         <Link href="/app/quick-pay" className="brand">
-          <span className="brand-mark">
-            f<span>•</span>
-          </span>
-          fee<span className="brand-light">flow</span>
+          <span className="brand-mark">{user.orgName.slice(0, 1)}</span>
+          <span style={{ overflowWrap: "anywhere" }}>{user.orgName}</span>
         </Link>
-        <div className="workspace-card">
-          <span className="workspace-avatar">{user.orgName.slice(0, 1)}</span>
-          <div>
-            <strong>{user.orgName}</strong>
-            <small>{user.profile.toLowerCase()} workspace</small>
-          </div>
-        </div>
         <p className="nav-caption">WORKSPACE</p>
         <nav aria-label="Main navigation">
           {NAV.filter(
             (n) =>
-              !["reminders", "settlements", "finance"].includes(n[1]) ||
-              user.roles.some((r) =>
-                ["OWNER", "FINANCE", "BRANCH_MANAGER"].includes(r),
-              ),
+              (!restaurant ||
+                ["quick-pay", "transactions", "settings"].includes(n[1]) ||
+                (restaurantOwner && n[1] === "dashboard")) &&
+              (user.orgId !== "local" || n[1] !== "finance") &&
+              ((n[1] === "reminders" && user.orgId === "local") ||
+                !["reminders", "finance"].includes(n[1]) ||
+                user.roles.some((r) =>
+                  ["OWNER", "FINANCE", "BRANCH_MANAGER"].includes(r),
+                )),
           ).map(([label, slug, icon]) => (
             <Link
               key={slug}
@@ -82,7 +114,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               className={`side-link ${path.startsWith(`/app/${slug}`) ? "active" : ""}`}
             >
               <Icon name={icon} />
-              {label}
+              {slug === "groups" &&
+              user.profile === "SCHOOL" &&
+              user.orgId === "local"
+                ? "Classes & fees"
+                : slug === "groups" &&
+                    user.profile === "SPORTS" &&
+                    user.orgId === "local"
+                  ? "Programs & fees"
+                  : label}
               {slug === "quick-pay" && <span className="nav-plus">+</span>}
             </Link>
           ))}

@@ -87,7 +87,13 @@ export async function automationRoutes(app: FastifyInstance) {
           req.user,
           (req.query as { branchId?: string }).branchId,
         ),
-        select: { id: true, purpose: true, amountPaise: true, paidPaise: true },
+        select: {
+          id: true,
+          memberId: true,
+          purpose: true,
+          amountPaise: true,
+          paidPaise: true,
+        },
       });
       const messages = await prisma.messageOccurrence.findMany({
         where: { billId: { in: bills.map((b) => b.id) } },

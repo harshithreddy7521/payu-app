@@ -1,3 +1,5 @@
+import { getDeviceSession } from "./device-store";
+import { apiFetch as deviceFetch } from "../../../mobile/src/local/api";
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 export async function apiFetch<T>(
@@ -5,6 +7,16 @@ export async function apiFetch<T>(
   init?: RequestInit & { token?: string },
 ): Promise<T> {
   const { token, ...rest } = init ?? {};
+  const device = getDeviceSession();
+  if (device && token === device.token) return deviceFetch<T>(path, init);
+  if (
+    typeof window !== "undefined" &&
+    token &&
+    JSON.parse(sessionStorage.getItem("fee_user") ?? "null")?.orgId === "local"
+  )
+    throw Object.assign(new Error("Sign in to unlock your workspace."), {
+      status: 401,
+    });
   if (
     typeof window !== "undefined" &&
     (!rest.method || rest.method === "GET") &&

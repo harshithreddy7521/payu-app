@@ -17,7 +17,7 @@ export default (): ExpoConfig => ({
     permissions: [],
     allowBackup: false,
     blockedPermissions:
-      process.env.APP_VARIANT === "production"
+      process.env.APP_VARIANT === "production" && !process.env.EXPO_PUBLIC_WEB_URL
         ? [
             "android.permission.INTERNET",
             "android.permission.ACCESS_NETWORK_STATE",

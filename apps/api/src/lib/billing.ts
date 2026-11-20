@@ -18,29 +18,39 @@ export function addDays(date: string, days: number): string {
     .toISOString()
     .slice(0, 10);
 }
+export function billingInterval(frequency: string) {
+  return frequency === "YEARLY" ? 12 : frequency === "QUARTERLY" ? 3 : 1;
+}
 export function nextBillDates(
   group: {
     frequency: string;
     billDayOfMonth?: number | null;
     endsAt?: Date | null;
+    createdAt?: Date | string;
   },
   count: number,
   from = new Date(),
 ): string[] {
-  if (group.frequency !== "MONTHLY") return [];
+  if (!["MONTHLY", "QUARTERLY", "YEARLY"].includes(group.frequency)) return [];
   const start = localDate(from);
-  let [year, m] = start.split("-").map(Number);
+  const [year, m] = start.split("-").map(Number);
   let month = m - 1;
+  const step = billingInterval(group.frequency);
+  const [anchorYear, anchorMonth] = group.createdAt
+    ? localDate(new Date(group.createdAt)).split("-").map(Number)
+    : [year, m];
+  const elapsed = (year - anchorYear) * 12 + m - anchorMonth;
+  month += (step - (((elapsed % step) + step) % step)) % step;
   const dates: string[] = [];
   for (let i = 0; i < count + 2 && dates.length < count; i++) {
-    const date = cycleDate(year, month, group.billDayOfMonth);
+    const date = cycleDate(
+      year + Math.floor(month / 12),
+      month % 12,
+      group.billDayOfMonth,
+    );
     if (group.endsAt && istInstant(date) > group.endsAt) break;
     if (istInstant(date) >= from) dates.push(date);
-    month++;
-    if (month === 12) {
-      month = 0;
-      year++;
-    }
+    month += step;
   }
   return dates;
 }

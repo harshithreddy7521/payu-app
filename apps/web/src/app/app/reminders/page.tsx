@@ -1,7 +1,8 @@
 "use client";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
-import { getToken } from "@/lib/auth";
+import { getToken, getUser, isDeviceWorkspace } from "@/lib/auth";
 type Reminder = {
   id: string;
   status: string;
@@ -9,10 +10,21 @@ type Reminder = {
   scheduledAt: string;
   sentAt: string | null;
   failureReason: string | null;
-  bill: { purpose: string; amountPaise: number; paidPaise: number };
+  bill: {
+    id: string;
+    memberId?: string;
+    purpose: string;
+    amountPaise: number;
+    paidPaise: number;
+  };
 };
 export default function Reminders() {
-  const [settings,setSettings]=useState({reminderStartHour:8,reminderEndHour:20,reminderDailyCap:3});
+  const local = isDeviceWorkspace();
+  const [settings, setSettings] = useState({
+    reminderStartHour: 8,
+    reminderEndHour: 20,
+    reminderDailyCap: 3,
+  });
   const [rows, setRows] = useState<Reminder[]>([]),
     [error, setError] = useState(""),
     [message, setMessage] = useState(""),
@@ -29,7 +41,9 @@ export default function Reminders() {
   }
   useEffect(() => {
     void load();
-    apiFetch<typeof settings>("/v1/reminder-settings",{token:getToken()!}).then(setSettings).catch(e=>setError(e.message));
+    apiFetch<typeof settings>("/v1/reminder-settings", { token: getToken()! })
+      .then(setSettings)
+      .catch((e) => setError(e.message));
   }, []);
   async function run() {
     setBusy(true);
@@ -40,7 +54,7 @@ export default function Reminders() {
         body: "{}",
       });
       setMessage(
-        `${r.issued} eligible bills issued. Future cycles are created automatically by the worker.`,
+        `${r.issued} eligible bills issued. ${local ? "Open WhatsApp to send ready reminders." : "Future cycles are created automatically by the worker."}`,
       );
       await load();
     } catch (e) {
@@ -50,17 +64,32 @@ export default function Reminders() {
     }
   }
   async function resend(id: string) {
+    const tab = local ? window.open("about:blank", "_blank") : null;
+    if (tab) tab.opener = null;
     try {
-      await apiFetch("/v1/reminders/resend", {
-        method: "POST",
-        token: getToken()!,
-        body: JSON.stringify({ occurrenceId: id }),
-      });
+      const result = await apiFetch<{ whatsappUrl?: string }>(
+        "/v1/reminders/resend",
+        {
+          method: "POST",
+          token: getToken()!,
+          body: JSON.stringify({
+            occurrenceId: id,
+            ...(local ? { webOrigin: window.location.origin } : {}),
+          }),
+        },
+      );
+      if (result.whatsappUrl) {
+        if (tab) tab.location.href = result.whatsappUrl;
+        else window.location.assign(result.whatsappUrl);
+      }
       setMessage(
-        "Reminder queued. Eligibility will be checked before dispatch.",
+        local
+          ? "WhatsApp draft opened."
+          : "Reminder queued. Eligibility will be checked before dispatch.",
       );
       await load();
     } catch (e) {
+      tab?.close();
       setError((e as Error).message);
     }
   }
@@ -74,18 +103,26 @@ export default function Reminders() {
             A clear view of what’s queued, sent, and safely suppressed.
           </p>
         </div>
-        <button
-          className="btn btn-primary"
-          onClick={() => void run()}
-          disabled={busy}
-        >
-          Check eligible billing
-        </button>
+        {(!local ||
+          getUser()?.roles.some((role) =>
+            ["OWNER", "BRANCH_MANAGER"].includes(role),
+          )) && (
+          <button
+            className="btn btn-primary"
+            onClick={() => void run()}
+            disabled={busy}
+          >
+            Check eligible billing
+          </button>
+        )}
       </div>
       <div className="notice">
-        {settings.reminderStartHour}:00–{settings.reminderEndHour}:00 IST sending window · Up to {settings.reminderDailyCap} reminders per recipient per 24 hours
-        · Payment-in-progress grace period: 10 minutes. Demo messages use the
-        fake provider.
+        {settings.reminderStartHour}:00–{settings.reminderEndHour}:00 IST
+        sending window · Up to {settings.reminderDailyCap} reminders per
+        recipient per 24 hours
+        {local
+          ? " · Open a ready draft in WhatsApp to send it."
+          : " · Payment-in-progress grace period: 10 minutes. Demo messages use the fake provider."}
       </div>
       {error && (
         <p className="error-msg" role="alert">
@@ -98,7 +135,10 @@ export default function Reminders() {
         </p>
       )}
       <div className="stat-grid">
-        {["QUEUED", "SUBMITTED", "SUPPRESSED"].map((s) => (
+        {(local
+          ? ["READY", "OPENED", "SUPPRESSED"]
+          : ["QUEUED", "SUBMITTED", "SUPPRESSED"]
+        ).map((s) => (
           <div className="card stat-card" key={s}>
             <p className="stat-label">{s}</p>
             <p className="stat-value">
@@ -160,13 +200,23 @@ export default function Reminders() {
                   </span>
                 </td>
                 <td>
-                  {!["QUEUED", "UNKNOWN"].includes(r.status) &&
+                  {r.bill.memberId && (
+                    <Link
+                      className="btn btn-ghost"
+                      href={`/app/members?member=${encodeURIComponent(r.bill.memberId)}&bill=${encodeURIComponent(r.bill.id)}`}
+                    >
+                      Member payments
+                    </Link>
+                  )}
+                  {(local
+                    ? ["READY", "OPENED"].includes(r.status)
+                    : !["QUEUED", "UNKNOWN"].includes(r.status)) &&
                     r.bill.amountPaise > r.bill.paidPaise && (
                       <button
                         className="btn btn-ghost"
                         onClick={() => void resend(r.id)}
                       >
-                        Resend
+                        {local ? "Open WhatsApp" : "Resend"}
                       </button>
                     )}
                 </td>

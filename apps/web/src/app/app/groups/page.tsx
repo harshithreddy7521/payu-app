@@ -2,13 +2,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Icon from "@/components/Icon";
-import { getToken } from "@/lib/auth";
+import { getToken, getUser, isDeviceWorkspace } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 type Group = {
   id: string;
   name: string;
   amountPaise: number;
   frequency: string;
+  feePlan?: { mode: string };
   isActive: boolean;
   billDayOfMonth: number | null;
   _count: { memberships: number };
@@ -33,9 +34,14 @@ export default function Groups() {
             Set the rhythm once. Give every billing cycle a smoother start.
           </p>
         </div>
-        <Link href="/app/groups/new" className="btn btn-primary">
-          + Create group
-        </Link>
+        {(!isDeviceWorkspace() ||
+          getUser()?.roles.some((role) =>
+            ["OWNER", "BRANCH_MANAGER"].includes(role),
+          )) && (
+          <Link href="/app/groups/new" className="btn btn-primary">
+            + Create group
+          </Link>
+        )}
       </div>
       <div className="hero-banner">
         <div>
@@ -46,8 +52,8 @@ export default function Groups() {
             <em>More possibility.</em>
           </h2>
           <p>
-            Monthly billing, individual member amounts, and reminders that know
-            when to stop.
+            Fee schedules, member enrollments, and reminders that know when to
+            stop.
           </p>
         </div>
         <img src="/collection-art.svg" alt="Illustrated fee collection card" />
@@ -81,7 +87,14 @@ export default function Groups() {
               <div className="price">
                 ₹{(g.amountPaise / 100).toLocaleString("en-IN")}{" "}
                 <small>
-                  / {g.frequency === "MONTHLY" ? "month" : "one time"}
+                  /{" "}
+                  {(
+                    {
+                      MONTHLY: "month",
+                      QUARTERLY: "quarter",
+                      YEARLY: "year",
+                    } as Record<string, string>
+                  )[g.frequency] ?? "one time"}
                 </small>
               </div>
               <div className="group-card-footer">

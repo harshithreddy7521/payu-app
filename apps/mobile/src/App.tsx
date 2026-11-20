@@ -1,3 +1,15 @@
+import {
+  payable,
+  remaining,
+  type BalanceBill,
+  type MemberTotals,
+} from "./local/memberBalance";
+import {
+  parseFeeCharges,
+  paymentPlans,
+  type PaymentPlan,
+  type FeePlan,
+} from "./local/feePlans";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,7 +32,11 @@ import QRCode from "react-native-qrcode-svg";
 import type { DashboardStats, UserSummary } from "@fee/shared";
 import { rupeesToPaise } from "./lib/validation";
 import { systemPickerActive } from "./local/lockState";
+import PasswordResetPanel from "./local/PasswordResetPanel";
+import { cloudEndpoint } from "./local/cloud";
 import BackupPanel from "./local/BackupPanel";
+import { upiUrl, validVpa, type SchoolProfile } from "./local/onboarding";
+import { syncCloud, unlockCloud } from "./local/cloud";
 import { runBilling } from "./local/api";
 import { apiFetch, ApiError } from "./local/api";
 import { clearSession, loadSession, saveSession, Session } from "./lib/session";
@@ -38,6 +54,10 @@ type Member = {
   id: string;
   name: string;
   externalRef?: string;
+  totals?: MemberTotals;
+  feePaise?: number;
+  hostelFeePaise?: number;
+  concessionPercent?: number;
   guardians: {
     id: string;
     name: string;
@@ -52,18 +72,41 @@ type Group = {
   amountPaise: number;
   isActive: boolean;
   nextBillDates?: string[];
+  feePlan?: FeePlan;
+  reminderPolicies?: {
+    offsetDays: number;
+    sendTimeIST: string;
+    language: string;
+    isActive: boolean;
+  }[];
   memberships?: {
     id: string;
     memberId: string;
     leftAt: string | null;
     member: { name: string };
+    paidThrough?: string;
+    accessStatus?: string;
   }[];
+};
+type Reminder = {
+  id: string;
+  status: string;
+  scheduledAt: string;
+  failureReason: string | null;
+  bill: {
+    id: string;
+    memberId?: string;
+    purpose: string;
+    amountPaise: number;
+    paidPaise: number;
+  };
 };
 type Bill = {
   id: string;
   purpose: string;
   amountPaise: number;
   paidPaise: number;
+  plannedTotalPaise?: number;
   status: string;
   payments: {
     receiptNo: string;
@@ -78,10 +121,21 @@ const tabs = [
   "Members",
   "Groups",
   "Transactions",
+  "Reminders",
 
   "Settings",
 ];
-function App() {
+function App({
+  onSignup,
+  workspaceName,
+}: {
+  onSignup?: () => void;
+  workspaceName?: string;
+}) {
+  const [profile, setProfile] = useState<SchoolProfile>();
+  const [vpa, setVpa] = useState("");
+  const [cloud, setCloud] = useState<Awaited<ReturnType<typeof unlockCloud>>>();
+  const [syncStatus, setSyncStatus] = useState("");
   const [session, setSession] = useState<Session | null>(null),
     [boot, setBoot] = useState(true),
     [bootError, setBootError] = useState(""),
@@ -94,23 +148,69 @@ function App() {
     [refreshing, setRefreshing] = useState(false);
   const [email, setEmail] = useState(""),
     [password, setPassword] = useState("");
+  const [recover, setRecover] = useState(false);
   const [payAmount, setPayAmount] = useState("");
+  const [payPhone, setPayPhone] = useState("");
+  const [memberCsv, setMemberCsv] = useState("");
+  const [csvRows, setCsvRows] = useState<
+    { row: number; name: string; errors: string[] }[]
+  >([]);
+  const [classId, setClassId] = useState("");
+  const [plan, setPlan] = useState<PaymentPlan>("MONTHLY");
+  const [withHostel, setWithHostel] = useState(false);
+  const [optionalCharges, setOptionalCharges] = useState<string[]>([]);
+  const [academicMonth, setAcademicMonth] = useState("");
+  const [classHostel, setClassHostel] = useState("");
+  const [extraCharges, setExtraCharges] = useState("");
+  const [sportsMode, setSportsMode] = useState<
+    "SPORTS_RENEWAL" | "SPORTS_FIXED"
+  >("SPORTS_RENEWAL");
+  const [termMonths, setTermMonths] = useState(1);
+  const [overrideFee, setOverrideFee] = useState("");
+
+  const [standardFee, setStandardFee] = useState("");
+  const [tuition, setTuition] = useState("");
+  const [hostel, setHostel] = useState("");
+  const [feeMember, setFeeMember] = useState("");
+  const [concession, setConcession] = useState("");
+  const [payConsent, setPayConsent] = useState(false);
+  const [reminderRows, setReminderRows] = useState<Reminder[]>([]);
+  const [consentGuardian, setConsentGuardian] = useState("");
+  const [consentEvidence, setConsentEvidence] = useState("");
+  const [reminderOffsets, setReminderOffsets] = useState("-3, 0, 3");
+  const [reminderTime, setReminderTime] = useState("10:00");
+  const [reminderHindi, setReminderHindi] = useState(false);
+  const [reminderLimits, setReminderLimits] = useState({
+    reminderStartHour: 8,
+    reminderEndHour: 20,
+    reminderDailyCap: 3,
+  });
   const [amount, setAmount] = useState(""),
     [purpose, setPurpose] = useState(""),
     [pay, setPay] = useState<{
       billId: string;
       checkoutUrl: string;
       upiIntentUrl?: string;
+      whatsappUrl?: string;
     } | null>(null);
+  const [memberQuery, setMemberQuery] = useState("");
+  const [quickQuery, setQuickQuery] = useState("");
+  const [pickingMember, setPickingMember] = useState(false);
+  const [quickMember, setQuickMember] = useState<Member>();
+  const [quickBills, setQuickBills] = useState<BalanceBill[]>([]);
+  const [quickBillId, setQuickBillId] = useState("");
+  const [paymentMember, setPaymentMember] = useState<{
+    id: string;
+    name: string;
+  }>();
+  const [memberPayments, setMemberPayments] = useState<{
+    totals: MemberTotals;
+    bills: BalanceBill[];
+  }>();
   const [stats, setStats] = useState<DashboardStats | null>(null),
     [members, setMembers] = useState<Member[]>([]),
     [groups, setGroups] = useState<Group[]>([]),
-    [bills, setBills] = useState<Bill[]>([]),
-    [finance, setFinance] = useState<{
-      refunds: any[];
-      settlements: any[];
-      destinations: any[];
-    }>({ refunds: [], settlements: [], destinations: [] });
+    [bills, setBills] = useState<Bill[]>([]);
   const [selected, setSelected] = useState<Group | null>(null),
     [memberName, setMemberName] = useState(""),
     [memberRef, setMemberRef] = useState(""),
@@ -118,8 +218,7 @@ function App() {
     [phone, setPhone] = useState(""),
     [groupName, setGroupName] = useState(""),
     [fee, setFee] = useState(""),
-    [day, setDay] = useState("1"),
-    [verifyBill, setVerifyBill] = useState<Bill | null>(null),
+    [verifyBill, setVerifyBill] = useState<BalanceBill | null>(null),
     [reference, setReference] = useState(""),
     [verified, setVerified] = useState(false),
     [received, setReceived] = useState(""),
@@ -127,10 +226,72 @@ function App() {
     [refundReason, setRefundReason] = useState(""),
     [bankMask, setBankMask] = useState(""),
     [ifsc, setIfsc] = useState("");
+  const pageScroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const requestKey = useRef<{ body: string; key: string } | null>(null);
   const seq = useRef(0);
   const auth = useRef(session);
   auth.current = session;
+  const restaurant = session?.user.profile === "RESTAURANT";
+  const school = session?.user.profile === "SCHOOL";
+  const enrollment = { paymentPlan: plan, hostel: withHostel, optionalCharges };
+  const enrollmentPlan = (
+    tab === "Groups" ? selected : groups.find((group) => group.id === classId)
+  )?.feePlan;
+  function resetEnrollment() {
+    setPlan("MONTHLY");
+    setWithHostel(false);
+    setOptionalCharges([]);
+  }
+  const enrollmentFields = enrollmentPlan && (
+    <>
+      {enrollmentPlan.mode !== "SPORTS_RENEWAL" && (
+        <>
+          <Text style={styles.label}>Payment plan</Text>
+          {(Object.keys(paymentPlans) as PaymentPlan[]).map((option) => (
+            <Button
+              key={option}
+              title={paymentPlans[option]}
+              secondary={plan !== option}
+              onPress={() => setPlan(option)}
+            />
+          ))}
+        </>
+      )}
+      {enrollmentPlan.mode === "SCHOOL" && enrollmentPlan.hostelPaise > 0 && (
+        <View style={styles.row}>
+          <Switch
+            value={withHostel}
+            onValueChange={setWithHostel}
+            accessibilityLabel="Include hostel"
+          />
+          <Text style={styles.sub}>
+            Hostel {money(enrollmentPlan.hostelPaise)}
+          </Text>
+        </View>
+      )}
+      {enrollmentPlan.charges
+        .filter((charge) => charge.optional)
+        .map((charge) => (
+          <View key={charge.name} style={styles.row}>
+            <Switch
+              value={optionalCharges.includes(charge.name)}
+              accessibilityLabel={charge.name}
+              onValueChange={(selected) =>
+                setOptionalCharges(
+                  selected
+                    ? [...optionalCharges, charge.name]
+                    : optionalCharges.filter((name) => name !== charge.name),
+                )
+              }
+            />
+            <Text style={styles.sub}>
+              {charge.name} · {money(charge.amountPaise)}
+              {charge.upfront ? " · upfront" : ""}
+            </Text>
+          </View>
+        ))}
+    </>
+  );
   const financeRole = !!session?.user.roles.some((r) =>
     ["OWNER", "FINANCE"].includes(r),
   );
@@ -141,6 +302,10 @@ function App() {
     seq.current++;
     await clearSession();
     setSession(null);
+    setCloud(undefined);
+    setSyncStatus("");
+    setProfile(undefined);
+    setVpa("");
     setPassword("");
     setPay(null);
     setSelected(null);
@@ -149,9 +314,26 @@ function App() {
     setGroups([]);
     setBills([]);
     setStats(null);
-    setFinance({ refunds: [], settlements: [], destinations: [] });
     setAmount("");
     setPayAmount("");
+    setPayPhone("");
+    setQuickMember(undefined);
+    setQuickBills([]);
+    setQuickBillId("");
+    setQuickQuery("");
+    setPickingMember(false);
+    setPaymentMember(undefined);
+    setMemberPayments(undefined);
+    setMemberQuery("");
+    setPayConsent(false);
+    setMemberCsv("");
+    setCsvRows([]);
+    setOverrideFee("");
+    setClassId("");
+    resetEnrollment();
+    setReminderRows([]);
+    setConsentGuardian("");
+    setConsentEvidence("");
     setPurpose("");
     setReference("");
     setMemberName("");
@@ -211,13 +393,59 @@ function App() {
     }
   }
   useEffect(() => {
+    if (!cloud) return;
+    let active = true;
+    const sync = () => {
+      void syncCloud(cloud).then(
+        async (status) => {
+          const current = auth.current;
+          if (!active || !current) return;
+          setSyncStatus(status);
+          try {
+            const latest = await apiFetch<SchoolProfile>("/v1/local/profile", {
+              token: current.token,
+            });
+            if (active) setProfile(latest);
+          } catch (e) {
+            if (active) setSyncStatus((e as Error).message);
+          }
+        },
+        (error: Error) => {
+          if (active) setSyncStatus(error.message);
+        },
+      );
+    };
+    sync();
+    const timer = setInterval(sync, 3_600_000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [cloud]);
+  useEffect(() => {
+    if (!session) return;
+    const timer = setInterval(() => {
+      void runBilling().catch((e: Error) => setError(e.message));
+    }, 3_600_000);
+    return () => clearInterval(timer);
+  }, [session]);
+  useEffect(() => {
     void restore();
   }, []);
   useEffect(() => {
-    let backgrounded=false;
+    let backgrounded = false;
     const sub = AppState.addEventListener("change", (state) => {
-      if(state==="background")backgrounded=true;
-      if(state==="active" && backgrounded && auth.current && !systemPickerActive()){backgrounded=false;void logout();return;}
+      if (state === "background") backgrounded = true;
+      if (
+        state === "active" &&
+        backgrounded &&
+        auth.current &&
+        !systemPickerActive()
+      ) {
+        backgrounded = false;
+        void logout();
+        return;
+      }
       if (state === "background" && auth.current && !systemPickerActive()) {
         void logout();
         return;
@@ -261,12 +489,12 @@ function App() {
     }
   }
   async function refresh() {
-    await runBilling();
     if (!auth.current) return;
     const id = ++seq.current;
     setRefreshing(true);
     setError("");
     try {
+      await runBilling();
       const suffix = branch ? `?branchId=${encodeURIComponent(branch)}` : "";
       if (tab === "Quick Pay" || tab === "Settings") {
         const r = await request<{ data: Branch[] }>("/v1/branches");
@@ -275,11 +503,23 @@ function App() {
           if (!branch && r.data.length === 1) setBranch(r.data[0].id);
         }
       }
+      if (tab === "Settings" && manageRole && !restaurant) {
+        const limits = await request<typeof reminderLimits>(
+          "/v1/reminder-settings",
+        );
+        if (id === seq.current) setReminderLimits(limits);
+      }
+      if (tab === "Quick Pay" && !restaurant) {
+        const data = await request<{ data: Member[] }>("/v1/members");
+        if (id === seq.current) setMembers(data.data);
+      }
       if (tab === "Overview") {
         const data = await request<DashboardStats>("/v1/dashboard" + suffix);
         if (id === seq.current) setStats(data);
       }
       if (tab === "Members") {
+        const available = await request<{ data: Group[] }>("/v1/groups");
+        if (id === seq.current) setGroups(available.data);
         const r = await request<{ data: Member[] }>("/v1/members");
         if (id === seq.current) setMembers(r.data);
       }
@@ -289,22 +529,13 @@ function App() {
         const m = await request<{ data: Member[] }>("/v1/members");
         if (id === seq.current) setMembers(m.data);
       }
+      if (tab === "Reminders") {
+        const result = await request<{ data: Reminder[] }>("/v1/reminders");
+        if (id === seq.current) setReminderRows(result.data);
+      }
       if (tab === "Transactions") {
         const r = await request<{ data: Bill[] }>("/v1/transactions" + suffix);
         if (id === seq.current) setBills(r.data);
-      }
-      if (tab === "Finance" && financeRole) {
-        const [r, s, d] = await Promise.all([
-          request<{ data: any[] }>("/v1/refunds"),
-          request<{ data: any[] }>("/v1/settlements"),
-          request<{ data: any[] }>("/v1/destinations"),
-        ]);
-        if (id === seq.current)
-          setFinance({
-            refunds: r.data,
-            settlements: s.data,
-            destinations: d.data,
-          });
       }
     } catch (e) {
       if (id === seq.current) setError((e as Error).message);
@@ -312,15 +543,89 @@ function App() {
       if (id === seq.current) setRefreshing(false);
     }
   }
+  function chooseQuickBill(bill?: BalanceBill) {
+    setQuickBillId(bill?.id ?? "");
+    setPurpose(bill?.purpose ?? "");
+    setPayAmount(
+      bill
+        ? (
+            (bill.amountPaise - bill.paidPaise || remaining(bill)) / 100
+          ).toFixed(2)
+        : "",
+    );
+  }
+  function memberBalance(id: string) {
+    return request<{
+      name?: string;
+      totals: MemberTotals;
+      bills: BalanceBill[];
+    }>(`/v1/members/${id}/balance`);
+  }
+  async function chooseQuickMember(member: Member) {
+    const data = await memberBalance(member.id);
+    const open = data.bills.filter(
+      (bill) => payable(bill) && remaining(bill) > 0,
+    );
+    setQuickMember(member);
+    setQuickBills(open);
+    setPickingMember(false);
+    if (open.some((bill) => bill.amountPaise > bill.paidPaise))
+      chooseQuickBill(open.find((bill) => bill.amountPaise > bill.paidPaise));
+  }
+  function chooseVerification(bill: BalanceBill, requestedAmount?: number) {
+    setVerifyBill(bill);
+    const prefill =
+      requestedAmount && requestedAmount <= remaining(bill)
+        ? requestedAmount
+        : bill.amountPaise - bill.paidPaise || remaining(bill);
+    setAmount((prefill / 100).toFixed(2));
+    pageScroll.current?.scrollTo({ y: 0, animated: true });
+    setReference("");
+    setReceived(new Date().toISOString());
+    setVerified(false);
+    setNote("");
+  }
+  async function openMemberPayments(
+    id: string,
+    name: string,
+    billId?: string,
+    requestedAmount?: number,
+  ) {
+    const data = await memberBalance(id);
+    setTab("Members");
+    setVerifyBill(null);
+    setPaymentMember({ id, name: data.name ?? name });
+    pageScroll.current?.scrollTo({ y: 0, animated: true });
+    setMemberPayments(data);
+    if (billId) {
+      const bill = data.bills.find((row) => row.id === billId);
+      if (bill && financeRole && payable(bill) && remaining(bill) > 0)
+        chooseVerification(bill, requestedAmount);
+    }
+  }
+  const matchesMember = (member: Member, value: string) =>
+    [
+      member.name,
+      member.externalRef,
+      ...member.guardians.map((guardian) => guardian.phone),
+    ].some((field) =>
+      field?.toLowerCase().includes(value.trim().toLowerCase()),
+    );
   useEffect(() => {
     setSelected(null);
-    setVerifyBill(null);
+    if (tab !== "Members") setVerifyBill(null);
     setError("");
     setNotice("");
     void refresh();
   }, [tab, branch, session?.token]);
   async function openGroup(id: string) {
-    setSelected(await request<Group>(`/v1/groups/${id}`));
+    const group = await request<Group>(`/v1/groups/${id}`);
+    setSelected(group);
+    resetEnrollment();
+    const policies = group.reminderPolicies?.filter((p) => p.isActive) ?? [];
+    setReminderOffsets(policies.map((p) => p.offsetDays).join(", "));
+    setReminderTime(policies[0]?.sendTimeIST ?? "10:00");
+    setReminderHindi(policies[0]?.language === "hi");
   }
   async function openUpi() {
     if (!pay?.upiIntentUrl?.startsWith("upi://pay?"))
@@ -375,54 +680,101 @@ function App() {
             <Text
               style={{ fontSize: 32, color: colors.green, fontWeight: "700" }}
             >
-              feeflow ✦
+              {workspaceName || "Feeflow"}
             </Text>
             <Heading
               title="Less chasing. More growing."
               sub="Your community, collections and billing in one place."
             />
             <Card>
-              <Field
-                label="Work email"
-                autoCapitalize="none"
-                keyboardType="email-address"
-                autoComplete="email"
-                value={email}
-                onChangeText={setEmail}
-              />
-              <Field
-                label="Password"
-                secureTextEntry
-                autoComplete="password"
-                value={password}
-                onChangeText={setPassword}
-              />
-              {!!error && (
-                <Text accessibilityRole="alert" style={styles.error}>
-                  {error}
-                </Text>
-              )}
-              <Button
-                title="Sign in"
-                busy={busy}
-                disabled={!email || !password}
-                onPress={() =>
-                  void act(async () => {
-                    const result = await apiFetch<Session>("/v1/auth/login", {
-                      method: "POST",
-                      body: JSON.stringify({ email: email.trim(), password }),
-                    });
-                    await saveSession(result);
-                    setSession(result);
+              {recover ? (
+                <PasswordResetPanel
+                  email={email}
+                  close={() => {
+                    setRecover(false);
                     setPassword("");
-                    setTab("Quick Pay");
-                  })
-                }
-              />
+                  }}
+                />
+              ) : (
+                <>
+                  <Field
+                    label="Work email"
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    autoComplete="email"
+                    value={email}
+                    onChangeText={setEmail}
+                  />
+                  <Field
+                    label="Password"
+                    secureTextEntry
+                    autoComplete="password"
+                    value={password}
+                    onChangeText={setPassword}
+                  />
+                  {!!error && (
+                    <Text accessibilityRole="alert" style={styles.error}>
+                      {error}
+                    </Text>
+                  )}
+                  <Button
+                    title="Sign in"
+                    busy={busy}
+                    disabled={!email || !password}
+                    onPress={() =>
+                      void act(async () => {
+                        const result = await apiFetch<Session>(
+                          "/v1/auth/login",
+                          {
+                            method: "POST",
+                            body: JSON.stringify({
+                              email: email.trim(),
+                              password,
+                            }),
+                          },
+                        );
+                        const school = await apiFetch<SchoolProfile>(
+                          "/v1/local/profile",
+                          { token: result.token },
+                        );
+                        setProfile(school);
+                        setStandardFee(
+                          school.standardFeePaise
+                            ? (school.standardFeePaise / 100).toFixed(2)
+                            : "",
+                        );
+                        setVpa(school.vpa ?? "");
+                        try {
+                          setCloud(await unlockCloud(result.token, password));
+                        } catch {
+                          setSyncStatus(
+                            "Could not unlock Google Drive credentials.",
+                          );
+                        }
+                        await saveSession(result);
+                        setSession(result);
+                        setPassword("");
+                        setTab("Quick Pay");
+                      })
+                    }
+                  />
+                  {!!cloudEndpoint() && (
+                    <Button
+                      title="Forgot password?"
+                      secondary
+                      onPress={() => setRecover(true)}
+                    />
+                  )}
+                  {onSignup && (
+                    <Button
+                      title="Create a workspace"
+                      secondary
+                      onPress={onSignup}
+                    />
+                  )}
+                </>
+              )}
             </Card>
-            <Text style={styles.sub}>
-              Single-device storage. All records stay on this phone. Payments are verified by authorised staff.
-            </Text>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -432,11 +784,9 @@ function App() {
       <StatusBar style="dark" />
       <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 }}>
         <Text style={{ fontSize: 24, fontWeight: "700", color: colors.green }}>
-          feeflow ✦
+          {session.user.orgName}
         </Text>
-        <Text style={styles.sub}>
-          {session.user.orgName} · {session.user.name}
-        </Text>
+        <Text style={styles.sub}>{session.user.name}</Text>
       </View>
       <ScrollView
         horizontal
@@ -444,7 +794,12 @@ function App() {
         contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
       >
         {tabs
-          .filter((t) => t !== "Finance" || financeRole)
+          .filter(
+            (t) =>
+              !restaurant ||
+              ["Quick Pay", "Transactions", "Settings"].includes(t) ||
+              (financeRole && t === "Overview"),
+          )
           .map((t) => (
             <Button
               key={t}
@@ -459,6 +814,7 @@ function App() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
+          ref={pageScroll}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.page}
           refreshControl={
@@ -477,6 +833,75 @@ function App() {
             <Text accessibilityRole="alert" style={styles.success}>
               {notice}
             </Text>
+          )}
+          {verifyBill && (
+            <Card>
+              <Heading
+                title="Record verified payment"
+                sub={verifyBill.purpose}
+              />
+              <Field
+                label="Amount received (₹)"
+                value={amount}
+                onChangeText={setAmount}
+                keyboardType="decimal-pad"
+              />
+              <Field
+                label="Bank / UPI reference"
+                value={reference}
+                onChangeText={setReference}
+                autoCapitalize="characters"
+              />
+              <Field
+                label="Received at (ISO date with timezone)"
+                value={received}
+                onChangeText={setReceived}
+              />
+              <Field
+                label="Verification note"
+                value={note}
+                onChangeText={setNote}
+              />
+              <Text style={styles.sub}>
+                I checked the receiving UPI app and confirmed this credit.
+              </Text>
+              <Switch
+                accessibilityLabel="I verified the receiving account"
+                value={verified}
+                onValueChange={setVerified}
+              />
+              <Button
+                title="Confirm verified payment"
+                busy={busy}
+                disabled={!verified || !reference || !amount}
+                onPress={() =>
+                  void act(async () => {
+                    const data = await request<{ receiptNo: string }>(
+                      `/v1/transactions/${verifyBill.id}/verified-payment`,
+                      "POST",
+                      {
+                        amountPaise: rupeesToPaise(amount),
+                        reference,
+                        receivedAt: received,
+                        verificationMethod: "UPI_APP",
+                        note,
+                        verified,
+                      },
+                    );
+                    setVerifyBill(null);
+                    if (tab === "Members" && paymentMember)
+                      setMemberPayments(await memberBalance(paymentMember.id));
+                    await refresh();
+                    setNotice("Recorded. Receipt " + data.receiptNo);
+                  })
+                }
+              />
+              <Button
+                title="Cancel verification"
+                secondary
+                onPress={() => setVerifyBill(null)}
+              />
+            </Card>
           )}
           {tab === "Quick Pay" && (
             <>
@@ -498,8 +923,109 @@ function App() {
                     No available branch. Pull to refresh or contact your owner.
                   </Text>
                 )}
+                {!pay && profile && validVpa(profile.vpa ?? "") && (
+                  <View style={{ alignItems: "center", padding: 15 }}>
+                    <Text style={styles.label}>Payment QR</Text>
+                    <QRCode
+                      value={upiUrl(profile.vpa, profile.name)}
+                      size={200}
+                    />
+                    <Text selectable style={styles.sub}>
+                      {profile.vpa}
+                    </Text>
+                  </View>
+                )}
+                {!pay && profile && !validVpa(profile.vpa ?? "") && (
+                  <Text style={styles.sub}>
+                    Set your school UPI address in Settings to collect payments.
+                  </Text>
+                )}
                 {!pay ? (
                   <>
+                    {!restaurant && (
+                      <>
+                        {quickMember ? (
+                          <>
+                            <Text style={styles.label}>{quickMember.name}</Text>
+                            <Button
+                              title="Clear member"
+                              secondary
+                              onPress={() => {
+                                setQuickMember(undefined);
+                                setQuickBills([]);
+                                if (quickBillId) chooseQuickBill();
+                              }}
+                            />
+                          </>
+                        ) : (
+                          <Button
+                            title={
+                              pickingMember
+                                ? "Close member search"
+                                : "Select member (optional)"
+                            }
+                            secondary
+                            onPress={() => setPickingMember(!pickingMember)}
+                          />
+                        )}
+                        {pickingMember && (
+                          <>
+                            <Field
+                              label="Search name, reference or phone"
+                              value={quickQuery}
+                              onChangeText={setQuickQuery}
+                            />
+                            {members
+                              .filter((member) =>
+                                matchesMember(member, quickQuery),
+                              )
+                              .slice(0, 15)
+                              .map((member) => (
+                                <Button
+                                  key={member.id}
+                                  title={
+                                    member.externalRef
+                                      ? member.name + " · " + member.externalRef
+                                      : member.name
+                                  }
+                                  secondary
+                                  busy={busy}
+                                  onPress={() =>
+                                    void act(() => chooseQuickMember(member))
+                                  }
+                                />
+                              ))}
+                            {!members.some((member) =>
+                              matchesMember(member, quickQuery),
+                            ) && (
+                              <Text style={styles.sub}>
+                                No matching members.
+                              </Text>
+                            )}
+                          </>
+                        )}
+                        {quickMember && quickBills.length > 0 && (
+                          <>
+                            <Text style={styles.label}>Apply payment to</Text>
+                            <Button
+                              title="Create a new charge"
+                              secondary={!!quickBillId}
+                              onPress={() => chooseQuickBill()}
+                            />
+                            {quickBills.map((bill) => (
+                              <Button
+                                key={bill.id}
+                                title={
+                                  bill.purpose + " · " + money(remaining(bill))
+                                }
+                                secondary={quickBillId !== bill.id}
+                                onPress={() => chooseQuickBill(bill)}
+                              />
+                            ))}
+                          </>
+                        )}
+                      </>
+                    )}
                     <Field
                       label="Amount (₹)"
                       keyboardType="decimal-pad"
@@ -507,16 +1033,43 @@ function App() {
                       onChangeText={setPayAmount}
                     />
                     <Field
-                      label="Purpose"
+                      label={
+                        restaurant
+                          ? "Table or order reference (optional)"
+                          : "Purpose"
+                      }
                       value={purpose}
                       onChangeText={setPurpose}
                     />
+                    <Field
+                      label="WhatsApp mobile number (optional)"
+                      keyboardType="phone-pad"
+                      value={payPhone}
+                      onChangeText={(value) => {
+                        setPayPhone(value);
+                        setPayConsent(false);
+                      }}
+                    />
+                    {!!payPhone && (
+                      <View style={styles.row}>
+                        <Switch
+                          value={payConsent}
+                          onValueChange={setPayConsent}
+                          accessibilityLabel="Recipient agreed to WhatsApp payment messages"
+                        />
+                        <Text style={styles.sub}>
+                          Recipient agreed to WhatsApp payment messages
+                        </Text>
+                      </View>
+                    )}
                     <Button
                       title="Create payment request"
                       busy={busy}
                       disabled={
                         !branch ||
-                        !purpose.trim() ||
+                        !validVpa(profile?.vpa ?? "") ||
+                        (!restaurant && !purpose.trim()) ||
+                        (!!payPhone.trim() && !payConsent) ||
                         !/^\d+(\.\d{1,2})?$/.test(payAmount) ||
                         Number(payAmount) <= 0
                       }
@@ -525,30 +1078,26 @@ function App() {
                           const body = {
                             branchId: branch,
                             amountPaise: rupeesToPaise(payAmount),
-                            purpose: purpose.trim(),
-                            isGuest: true,
+                            purpose: purpose.trim() || "Counter payment",
+                            memberId: quickMember?.id,
+                            existingBillId: quickBillId || undefined,
+                            isGuest: !quickMember,
+                            webOrigin: process.env.EXPO_PUBLIC_WEB_URL,
+                            ...(payPhone.trim()
+                              ? {
+                                  recipientPhone: payPhone.trim(),
+                                  deliveryChannel: "WHATSAPP",
+                                  deliveryConsent: payConsent,
+                                }
+                              : {}),
                           };
                           const result = await request<{
                             billId: string;
                             checkoutUrl: string;
-                            paymentLinkToken: string;
+                            upiIntentUrl: string;
+                            whatsappUrl?: string;
                           }>("/v1/quick-pay", "POST", body, keyFor(body));
                           setPay(result);
-                          try {
-                            const order = await request<{
-                              upiIntentUrl?: string;
-                            }>(
-                              `/pay/${result.paymentLinkToken}/checkout`,
-                              "POST",
-                              {},
-                            );
-                            setPay({ ...result, ...order });
-                          } catch (e) {
-                            setError(
-                              "Request created and preserved. " +
-                                (e as Error).message,
-                            );
-                          }
                         })
                       }
                     />
@@ -558,7 +1107,26 @@ function App() {
                     <Text style={styles.title}>
                       {money(rupeesToPaise(payAmount))}
                     </Text>
-                    <Text style={styles.sub}>{purpose}</Text>
+                    <Text style={styles.sub}>
+                      {purpose}
+                      {quickMember ? " · " + quickMember.name : ""}
+                    </Text>
+                    {quickMember && (
+                      <Button
+                        title="Member payments"
+                        secondary
+                        onPress={() =>
+                          void act(() =>
+                            openMemberPayments(
+                              quickMember.id,
+                              quickMember.name,
+                              pay.billId,
+                              rupeesToPaise(payAmount),
+                            ),
+                          )
+                        }
+                      />
+                    )}
                     <View
                       accessible
                       accessibilityLabel="UPI payment QR"
@@ -570,8 +1138,20 @@ function App() {
                       />
                     </View>
                     <Text selectable style={styles.sub}>
-                      {pay.checkoutUrl}
+                      {pay.upiIntentUrl
+                        ? new URL(pay.upiIntentUrl).searchParams.get("pa")
+                        : profile?.vpa}
                     </Text>
+                    {pay.whatsappUrl && (
+                      <Button
+                        title="Open WhatsApp to send"
+                        onPress={() =>
+                          void act(async () => {
+                            await Linking.openURL(pay.whatsappUrl!);
+                          })
+                        }
+                      />
+                    )}
                     <Button
                       title="Share UPI payment request"
                       onPress={() =>
@@ -596,6 +1176,12 @@ function App() {
                         setPay(null);
                         setPayAmount("");
                         setPurpose("");
+                        setPayPhone("");
+                        setPayConsent(false);
+                        setQuickMember(undefined);
+                        setQuickBills([]);
+                        setQuickBillId("");
+                        setQuickQuery("");
                         requestKey.current = null;
                       }}
                     />
@@ -614,10 +1200,7 @@ function App() {
                 Object.entries({
                   Collected: stats.grossConfirmedPaise,
                   Outstanding: stats.outstandingPaise,
-                  Refunded: stats.refundedPaise,
-                  "Provider available": stats.availablePaise,
-                  Held: stats.heldPaise,
-                  Settled: stats.settledPaise,
+                  ...(!restaurant ? { Refunded: stats.refundedPaise } : {}),
                 }).map(([name, value]) => (
                   <Card key={name}>
                     <Text style={styles.sub}>{name}</Text>
@@ -628,11 +1211,57 @@ function App() {
           )}
           {tab === "Members" && (
             <>
+              {paymentMember && memberPayments && (
+                <Card>
+                  <Heading title={paymentMember.name + " · Payments"} />
+                  <Text style={styles.label}>
+                    Paid {money(memberPayments.totals.paidPaise)}
+                  </Text>
+                  <Text style={styles.sub}>
+                    Due now {money(memberPayments.totals.duePaise)} · Total
+                    remaining {money(memberPayments.totals.remainingPaise)}
+                  </Text>
+                  {memberPayments.bills.map((bill) => (
+                    <View key={bill.id} style={{ gap: 6 }}>
+                      <Text style={styles.label}>{bill.purpose}</Text>
+                      <Text style={styles.sub}>
+                        Paid {money(bill.paidPaise)} · Remaining{" "}
+                        {money(payable(bill) ? remaining(bill) : 0)}
+                      </Text>
+                      {financeRole && payable(bill) && remaining(bill) > 0 && (
+                        <Button
+                          title="Record payment received"
+                          secondary
+                          onPress={() => chooseVerification(bill)}
+                        />
+                      )}
+                    </View>
+                  ))}
+                  {!memberPayments.bills.length && (
+                    <Text style={styles.sub}>No charges yet.</Text>
+                  )}
+                  <Button
+                    title="Close member payments"
+                    secondary
+                    onPress={() => {
+                      setVerifyBill(null);
+                      setPaymentMember(undefined);
+                      setMemberPayments(undefined);
+                    }}
+                  />
+                </Card>
+              )}
+              <Field
+                label="Search members"
+                value={memberQuery}
+                onChangeText={setMemberQuery}
+              />
+
               <Heading
                 title="Your community."
                 sub="Showing the latest 50 active members. Pull to refresh."
               />
-              {manageRole && (
+              {session && (
                 <Card>
                   <Field
                     label="Member name"
@@ -655,6 +1284,56 @@ function App() {
                     value={phone}
                     onChangeText={setPhone}
                   />
+                  {groups.some((group) => group.isActive && group.feePlan) && (
+                    <>
+                      <Text style={styles.label}>
+                        {school ? "Class" : "Program"}
+                      </Text>
+                      <Button
+                        title="Enroll later"
+                        secondary={!!classId}
+                        onPress={() => {
+                          setClassId("");
+                          resetEnrollment();
+                        }}
+                      />
+                      {groups
+                        .filter((group) => group.isActive && group.feePlan)
+                        .map((group) => (
+                          <Button
+                            key={group.id}
+                            title={group.name}
+                            secondary={classId !== group.id}
+                            onPress={() => {
+                              setClassId(group.id);
+                              resetEnrollment();
+                            }}
+                          />
+                        ))}
+                      {enrollmentFields}
+                    </>
+                  )}
+                  {school && !groups.some((group) => group.feePlan) && (
+                    <>
+                      <Field
+                        label="Total tuition fee (₹, before concession)"
+                        keyboardType="decimal-pad"
+                        editable={profile?.standardFeePaise === undefined}
+                        value={
+                          profile?.standardFeePaise
+                            ? (profile.standardFeePaise / 100).toFixed(2)
+                            : tuition
+                        }
+                        onChangeText={setTuition}
+                      />
+                      <Field
+                        label="Hostel fee (₹, optional)"
+                        keyboardType="decimal-pad"
+                        value={hostel}
+                        onChangeText={setHostel}
+                      />
+                    </>
+                  )}
                   <Button
                     title="Add member"
                     busy={busy}
@@ -665,10 +1344,28 @@ function App() {
                       void act(async () => {
                         await request("/v1/members", "POST", {
                           name: memberName,
+                          ...(classId
+                            ? { groupId: classId, ...enrollment }
+                            : {}),
+                          ...(school && !classId
+                            ? {
+                                feePaise: tuition.trim()
+                                  ? rupeesToPaise(tuition)
+                                  : undefined,
+                                hostelFeePaise:
+                                  hostel.trim() && Number(hostel) !== 0
+                                    ? rupeesToPaise(hostel)
+                                    : 0,
+                              }
+                            : {}),
                           externalRef: memberRef || undefined,
                           guardians: phone ? [{ name: guardian, phone }] : [],
                         });
                         setMemberName("");
+                        setClassId("");
+                        resetEnrollment();
+                        setTuition("");
+                        setHostel("");
                         setMemberRef("");
                         setPhone("");
                         setGuardian("");
@@ -678,42 +1375,211 @@ function App() {
                   />
                 </Card>
               )}
-              {members.map((m) => (
-                <Card key={m.id}>
-                  <Text style={styles.label}>{m.name}</Text>
-                  <Text style={styles.sub}>
-                    {m.externalRef ?? "No reference"} ·{" "}
-                    {m.guardians[0]?.phone.replace(/.(?=.{4})/g, "•") ??
-                      "No contact"}
-                  </Text>
-                  {manageRole && (
+              {manageRole && (
+                <Card>
+                  <Text style={styles.label}>Import members from CSV</Text>
+                  <Field
+                    label="Paste CSV"
+                    placeholder="name,externalRef,guardianName,phone"
+                    multiline
+                    autoCapitalize="none"
+                    value={memberCsv}
+                    onChangeText={(value) => {
+                      setMemberCsv(value);
+                      setCsvRows([]);
+                    }}
+                  />
+                  <Button
+                    title="Preview CSV"
+                    secondary
+                    disabled={!memberCsv.trim()}
+                    onPress={() =>
+                      void act(async () => {
+                        const result = await request<{ rows: typeof csvRows }>(
+                          "/v1/members/import",
+                          "POST",
+                          { csv: memberCsv },
+                        );
+                        setCsvRows(result.rows);
+                      })
+                    }
+                  />
+                  {csvRows.slice(0, 20).map((row) => (
+                    <Text key={row.row} style={styles.sub}>
+                      {row.row}. {row.name} · {row.errors.join(", ") || "Ready"}
+                    </Text>
+                  ))}
+                  {!!csvRows.length && (
                     <Button
-                      title="Archive member"
-                      secondary
+                      title={`Import ${csvRows.length} members`}
+                      disabled={csvRows.some((row) => row.errors.length > 0)}
                       onPress={() =>
-                        Alert.alert(
-                          "Archive member?",
-                          "History and existing bills will be retained.",
-                          [
-                            { text: "Cancel", style: "cancel" },
-                            {
-                              text: "Archive",
-                              onPress: () =>
-                                void act(async () => {
-                                  await request(
-                                    `/v1/members/${m.id}/archive`,
-                                    "PATCH",
-                                  );
-                                  await refresh();
-                                }),
-                            },
-                          ],
-                        )
+                        void act(async () => {
+                          const result = await request<{ imported: number }>(
+                            "/v1/members/import",
+                            "POST",
+                            { csv: memberCsv, confirm: true },
+                          );
+                          setMemberCsv("");
+                          setCsvRows([]);
+                          await refresh();
+                          setNotice(`${result.imported} members imported.`);
+                        })
                       }
                     />
                   )}
                 </Card>
-              ))}
+              )}
+              {members
+                .filter((m) => matchesMember(m, memberQuery))
+                .map((m) => (
+                  <Card key={m.id}>
+                    <Text style={styles.label}>{m.name}</Text>
+                    <Text style={styles.sub}>
+                      Paid {money(m.totals?.paidPaise ?? 0)} · Due now{" "}
+                      {money(m.totals?.duePaise ?? 0)} · Total remaining{" "}
+                      {money(m.totals?.remainingPaise ?? 0)}
+                    </Text>
+                    <Button
+                      title="Payments"
+                      secondary
+                      onPress={() =>
+                        void act(() => openMemberPayments(m.id, m.name))
+                      }
+                    />
+                    <Text style={styles.sub}>
+                      {m.externalRef ?? "No reference"} ·{" "}
+                      {m.guardians[0]?.phone.replace(/.(?=.{4})/g, "•") ??
+                        "No contact"}
+                    </Text>
+                    {session.user.profile !== "RESTAURANT" && (
+                      <Text style={styles.sub}>
+                        Concession {m.concessionPercent ?? 0}%
+                        {m.feePaise ? ` · Tuition ${money(m.feePaise)}` : ""}
+                        {m.hostelFeePaise
+                          ? ` · Hostel ${money(m.hostelFeePaise)}`
+                          : ""}
+                      </Text>
+                    )}
+                    {manageRole && session.user.profile !== "RESTAURANT" && (
+                      <>
+                        {feeMember === m.id ? (
+                          <>
+                            <Field
+                              label="Concession (%)"
+                              keyboardType="number-pad"
+                              value={concession}
+                              onChangeText={setConcession}
+                            />
+                            <Button
+                              title="Save concession"
+                              disabled={
+                                !/^\d{1,3}$/.test(concession) ||
+                                Number(concession) > 100
+                              }
+                              onPress={() =>
+                                void act(async () => {
+                                  await request(
+                                    `/v1/members/${m.id}/fees`,
+                                    "PUT",
+                                    { concessionPercent: Number(concession) },
+                                  );
+                                  setFeeMember("");
+                                  await refresh();
+                                })
+                              }
+                            />
+                          </>
+                        ) : (
+                          <Button
+                            title="Edit concession"
+                            secondary
+                            onPress={() => {
+                              setFeeMember(m.id);
+                              setConcession(String(m.concessionPercent ?? 0));
+                            }}
+                          />
+                        )}
+                      </>
+                    )}
+                    {session &&
+                      m.guardians.map((contact) => {
+                        const optedIn = Boolean(
+                          contact.whatsappConsentedAt && !contact.optOut,
+                        );
+                        return (
+                          <View key={contact.id}>
+                            <Button
+                              title={
+                                optedIn
+                                  ? "Withdraw WhatsApp permission"
+                                  : "Record WhatsApp permission"
+                              }
+                              secondary
+                              onPress={() => {
+                                setConsentEvidence("");
+                                setConsentGuardian(contact.id);
+                              }}
+                            />
+                            {consentGuardian === contact.id && (
+                              <>
+                                <Field
+                                  label="Permission evidence"
+                                  value={consentEvidence}
+                                  onChangeText={setConsentEvidence}
+                                />
+                                <Button
+                                  title="Save WhatsApp permission"
+                                  disabled={consentEvidence.trim().length < 3}
+                                  onPress={() =>
+                                    void act(async () => {
+                                      await request(
+                                        `/v1/members/${m.id}/guardians/${contact.id}/whatsapp-consent`,
+                                        "PUT",
+                                        {
+                                          optIn: !optedIn,
+                                          evidence: consentEvidence,
+                                        },
+                                      );
+                                      setConsentGuardian("");
+                                      setConsentEvidence("");
+                                      await refresh();
+                                    })
+                                  }
+                                />
+                              </>
+                            )}
+                          </View>
+                        );
+                      })}
+                    {manageRole && (
+                      <Button
+                        title="Archive member"
+                        secondary
+                        onPress={() =>
+                          Alert.alert(
+                            "Archive member?",
+                            "History and existing bills will be retained.",
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              {
+                                text: "Archive",
+                                onPress: () =>
+                                  void act(async () => {
+                                    await request(
+                                      `/v1/members/${m.id}/archive`,
+                                      "PATCH",
+                                    );
+                                    await refresh();
+                                  }),
+                              },
+                            ],
+                          )
+                        }
+                      />
+                    )}
+                  </Card>
+                ))}
               {!members.length && !refreshing && (
                 <Text style={styles.sub}>No members yet.</Text>
               )}
@@ -722,8 +1588,8 @@ function App() {
           {tab === "Groups" && (
             <>
               <Heading
-                title="Groups & billing."
-                sub="Monthly fees follow Asia/Kolkata scheduling."
+                title={school ? "Classes & fees" : "Programs & fees"}
+                sub="Fees and reminders follow India Standard Time."
               />
               {!selected ? (
                 <>
@@ -735,17 +1601,72 @@ function App() {
                         onChangeText={setGroupName}
                       />
                       <Field
-                        label="Monthly fee (₹)"
+                        label={
+                          school
+                            ? "Annual tuition (₹)"
+                            : "Program fee for the term (₹)"
+                        }
                         keyboardType="decimal-pad"
                         value={fee}
                         onChangeText={setFee}
                       />
+                      {school ? (
+                        <>
+                          <Field
+                            label="Academic year starts (YYYY-MM)"
+                            value={academicMonth}
+                            onChangeText={setAcademicMonth}
+                          />
+                          <Field
+                            label="Optional annual hostel fee (₹)"
+                            keyboardType="decimal-pad"
+                            value={classHostel}
+                            onChangeText={setClassHostel}
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            title={
+                              sportsMode === "SPORTS_RENEWAL"
+                                ? "Renewable membership"
+                                : "Fixed-term coaching"
+                            }
+                            secondary
+                            onPress={() =>
+                              setSportsMode(
+                                sportsMode === "SPORTS_RENEWAL"
+                                  ? "SPORTS_FIXED"
+                                  : "SPORTS_RENEWAL",
+                              )
+                            }
+                          />
+                          <Text style={styles.label}>Term length</Text>
+                          {[1, 3, 6, 12].map((months) => (
+                            <Button
+                              key={months}
+                              title={`${months} months`}
+                              secondary={termMonths !== months}
+                              onPress={() => setTermMonths(months)}
+                            />
+                          ))}
+                        </>
+                      )}
                       <Field
-                        label="Issue day (1–31, blank for month-end)"
-                        keyboardType="number-pad"
-                        value={day}
-                        onChangeText={setDay}
+                        label="Additional charges"
+                        multiline
+                        value={extraCharges}
+                        onChangeText={setExtraCharges}
+                        placeholder={
+                          school
+                            ? "Books, 3000, upfront, required"
+                            : "Registration, 500, upfront, required"
+                        }
                       />
+                      <Text style={styles.sub}>
+                        One charge per line: name, amount in rupees, upfront or
+                        spread, required or optional.
+                      </Text>
                       <Button
                         title="Preview and create group"
                         disabled={!branch || !groupName || Number(fee) <= 0}
@@ -756,8 +1677,22 @@ function App() {
                               branchId: branch,
                               name: groupName,
                               amountPaise: rupeesToPaise(fee),
-                              billDayOfMonth: day ? Number(day) : null,
-                              dueDayOffset: 7,
+                              feePlan: school
+                                ? {
+                                    mode: "SCHOOL",
+                                    startsOn: academicMonth.trim() + "-01",
+                                    hostelPaise:
+                                      classHostel.trim() &&
+                                      Number(classHostel) !== 0
+                                        ? rupeesToPaise(classHostel)
+                                        : 0,
+                                    charges: parseFeeCharges(extraCharges),
+                                  }
+                                : {
+                                    mode: sportsMode,
+                                    months: termMonths,
+                                    charges: parseFeeCharges(extraCharges),
+                                  },
                             };
                             const preview = await request<{
                               cycles: { issueDate: string; dueDate: string }[];
@@ -804,8 +1739,13 @@ function App() {
                 <Card>
                   <Heading title={selected.name} />
                   <Text style={styles.sub}>
-                    Next cycles:{" "}
-                    {selected.nextBillDates?.join(" · ") || "No future cycles"}
+                    {selected.feePlan
+                      ? selected.feePlan.mode === "SCHOOL"
+                        ? "Academic year starts " + selected.feePlan.startsOn
+                        : selected.feePlan.months + "-month program"
+                      : "Next cycles: " +
+                        (selected.nextBillDates?.join(" · ") ||
+                          "No future cycles")}
                   </Text>
                   {manageRole && (
                     <Button
@@ -825,12 +1765,72 @@ function App() {
                       }
                     />
                   )}
+                  {manageRole && !selected.feePlan && (
+                    <>
+                      <Text style={styles.label}>WhatsApp reminder policy</Text>
+                      <Field
+                        label="Days relative to due date"
+                        value={reminderOffsets}
+                        onChangeText={setReminderOffsets}
+                      />
+                      <Field
+                        label="Send time (HH:MM IST)"
+                        value={reminderTime}
+                        onChangeText={setReminderTime}
+                      />
+                      <View style={styles.row}>
+                        <Switch
+                          value={reminderHindi}
+                          onValueChange={setReminderHindi}
+                          accessibilityLabel="Use Hindi for WhatsApp reminders"
+                        />
+                        <Text style={styles.sub}>
+                          Use Hindi for WhatsApp reminders
+                        </Text>
+                      </View>
+                      <Button
+                        title="Save reminder policy"
+                        secondary
+                        onPress={() =>
+                          void act(async () => {
+                            const offsets = reminderOffsets.trim()
+                              ? reminderOffsets
+                                  .split(",")
+                                  .map((item) => Number(item.trim()))
+                              : [];
+                            await request(
+                              `/v1/groups/${selected.id}/reminders`,
+                              "PUT",
+                              offsets.map((offsetDays) => ({
+                                offsetDays,
+                                sendTimeIST: reminderTime,
+                                language: reminderHindi ? "hi" : "en",
+                                channels: ["WHATSAPP"],
+                              })),
+                            );
+                            await openGroup(selected.id);
+                            setNotice("Reminder policy saved.");
+                          })
+                        }
+                      />
+                    </>
+                  )}
                   <Text style={styles.label}>Active memberships</Text>
                   {selected.memberships
                     ?.filter((m) => !m.leftAt)
                     .map((m) => (
                       <View key={m.id} style={{ gap: 8 }}>
                         <Text>{m.member.name}</Text>
+                        {m.accessStatus && (
+                          <Text style={styles.sub}>
+                            {m.accessStatus === "ACTIVE"
+                              ? "Access active"
+                              : "Access paused"}
+                            {m.paidThrough
+                              ? ` · Paid until ${m.paidThrough}`
+                              : ""}
+                          </Text>
+                        )}
                         {manageRole && (
                           <Button
                             title={`Remove ${m.member.name}`}
@@ -859,7 +1859,17 @@ function App() {
                         )}
                       </View>
                     ))}
-                  {manageRole &&
+                  {selected.feePlan
+                    ? enrollmentFields
+                    : manageRole && (
+                        <Field
+                          label="Optional fee override when adding a member (₹)"
+                          keyboardType="decimal-pad"
+                          value={overrideFee}
+                          onChangeText={setOverrideFee}
+                        />
+                      )}
+                  {(manageRole || selected.feePlan) &&
                     members
                       .filter(
                         (m) =>
@@ -870,18 +1880,28 @@ function App() {
                       .map((m) => (
                         <Button
                           key={m.id}
-                          title={`Add ${m.name} from next cycle`}
+                          title={`Enroll ${m.name}`}
                           secondary
                           busy={busy}
                           onPress={() =>
                             void act(async () => {
-                              const body = { memberId: m.id };
+                              const body = {
+                                memberId: m.id,
+                                ...(selected.feePlan
+                                  ? enrollment
+                                  : overrideFee.trim()
+                                    ? {
+                                        amountPaise: rupeesToPaise(overrideFee),
+                                      }
+                                    : {}),
+                              };
                               await request(
                                 `/v1/groups/${selected.id}/members`,
                                 "POST",
                                 body,
                                 keyFor({ group: selected.id, ...body }),
                               );
+                              setOverrideFee("");
                               await openGroup(selected.id);
                             })
                           }
@@ -902,73 +1922,6 @@ function App() {
                 title="Follow the flow."
                 sub="Latest 50 bills. Staff verification records a bank credit; it never transfers money."
               />
-              {verifyBill && (
-                <Card>
-                  <Heading
-                    title="Record verified payment"
-                    sub={verifyBill.purpose}
-                  />
-                  <Field
-                    label="Amount received (₹)"
-                    value={amount}
-                    onChangeText={setAmount}
-                    keyboardType="decimal-pad"
-                  />
-                  <Field
-                    label="Bank / UPI reference"
-                    value={reference}
-                    onChangeText={setReference}
-                    autoCapitalize="characters"
-                  />
-                  <Field
-                    label="Received at (ISO date with timezone)"
-                    value={received}
-                    onChangeText={setReceived}
-                  />
-                  <Field
-                    label="Verification note"
-                    value={note}
-                    onChangeText={setNote}
-                  />
-                  <Text style={styles.sub}>
-                    I checked the receiving UPI app and confirmed this credit.
-                  </Text>
-                  <Switch
-                    accessibilityLabel="I verified the receiving account"
-                    value={verified}
-                    onValueChange={setVerified}
-                  />
-                  <Button
-                    title="Confirm verified payment"
-                    busy={busy}
-                    disabled={!verified || !reference || !amount}
-                    onPress={() =>
-                      void act(async () => {
-                        const data = await request<{ receiptNo: string }>(
-                          `/v1/transactions/${verifyBill.id}/verified-payment`,
-                          "POST",
-                          {
-                            amountPaise: rupeesToPaise(amount),
-                            reference,
-                            receivedAt: received,
-                            verificationMethod: "UPI_APP",
-                            note,
-                            verified,
-                          },
-                        );
-                        setNotice("Recorded. Receipt " + data.receiptNo);
-                        setVerifyBill(null);
-                        await refresh();
-                      })
-                    }
-                  />
-                  <Button
-                    title="Cancel verification"
-                    secondary
-                    onPress={() => setVerifyBill(null)}
-                  />
-                </Card>
-              )}
               {bills.map((b) => (
                 <Card key={b.id}>
                   <Text style={styles.label}>{b.purpose}</Text>
@@ -977,6 +1930,9 @@ function App() {
                   </Text>
                   <Text style={styles.sub}>
                     {b.status} · Paid {money(b.paidPaise)}
+                    {b.plannedTotalPaise !== undefined
+                      ? ` · Plan total ${money(b.plannedTotalPaise)}`
+                      : ""}
                   </Text>
                   {b.payments.map((p) => (
                     <Text selectable key={p.receiptNo} style={styles.sub}>
@@ -987,22 +1943,15 @@ function App() {
                       {"\n"}Receipt {p.receiptNo}
                     </Text>
                   ))}
-                  {financeRole &&
-                    ["ISSUED", "PARTIAL", "EXPIRED"].includes(b.status) &&
-                    b.paidPaise < b.amountPaise && (
+                  {(financeRole || restaurant) &&
+                    (b.plannedTotalPaise !== undefined ||
+                      ["ISSUED", "PARTIAL", "EXPIRED"].includes(b.status)) &&
+                    b.paidPaise <
+                      Math.max(b.plannedTotalPaise ?? 0, b.amountPaise) && (
                       <Button
                         title="Record verified payment"
                         secondary
-                        onPress={() => {
-                          setVerifyBill(b);
-                          setAmount(
-                            ((b.amountPaise - b.paidPaise) / 100).toFixed(2),
-                          );
-                          setReference("");
-                          setReceived(new Date().toISOString());
-                          setVerified(false);
-                          setNote("");
-                        }}
+                        onPress={() => chooseVerification(b)}
                       />
                     )}
                 </Card>
@@ -1012,9 +1961,158 @@ function App() {
               )}
             </>
           )}
+          {tab === "Reminders" && (
+            <>
+              <Heading
+                title="Reminders & billing jobs"
+                sub="Eligible WhatsApp drafts open for you to send."
+              />
+              {manageRole && (
+                <Button
+                  title="Check eligible billing"
+                  busy={busy}
+                  onPress={() =>
+                    void act(async () => {
+                      const result = await request<{ issued: number }>(
+                        "/v1/billing/run",
+                        "POST",
+                        {},
+                      );
+                      await refresh();
+                      setNotice(`${result.issued} eligible bills issued.`);
+                    })
+                  }
+                />
+              )}
+              {reminderRows.map((row) => (
+                <Card key={row.id}>
+                  <Text style={styles.label}>{row.bill.purpose}</Text>
+                  <Text style={styles.sub}>
+                    {money(row.bill.amountPaise - row.bill.paidPaise)} ·{" "}
+                    {row.status}
+                  </Text>
+                  <Text style={styles.sub}>
+                    {new Date(row.scheduledAt).toLocaleString("en-IN", {
+                      timeZone: "Asia/Kolkata",
+                    })}{" "}
+                    IST
+                  </Text>
+                  {!!row.failureReason && (
+                    <Text style={styles.sub}>{row.failureReason}</Text>
+                  )}
+                  {row.bill.memberId && (
+                    <Button
+                      title="Member payments"
+                      secondary
+                      onPress={() =>
+                        void act(() =>
+                          openMemberPayments(
+                            row.bill.memberId!,
+                            row.bill.purpose,
+                            row.bill.id,
+                          ),
+                        )
+                      }
+                    />
+                  )}
+                  {["READY", "OPENED"].includes(row.status) && (
+                    <Button
+                      title="Open WhatsApp"
+                      onPress={() =>
+                        void act(async () => {
+                          const result = await request<{ whatsappUrl: string }>(
+                            "/v1/reminders/resend",
+                            "POST",
+                            {
+                              occurrenceId: row.id,
+                              webOrigin: process.env.EXPO_PUBLIC_WEB_URL,
+                            },
+                          );
+                          await Linking.openURL(result.whatsappUrl);
+                        })
+                      }
+                    />
+                  )}
+                </Card>
+              ))}
+              {!reminderRows.length && (
+                <Text style={styles.sub}>
+                  No reminders yet. Reminders appear after a group bill is
+                  issued for a member with a guardian.
+                </Text>
+              )}
+            </>
+          )}
           {tab === "Settings" && (
             <>
               <Heading title="Your workspace." />
+              {manageRole && session.user.profile === "SCHOOL" && (
+                <Card>
+                  <Field
+                    label="Legacy group tuition per billing cycle (₹)"
+                    keyboardType="decimal-pad"
+                    value={standardFee}
+                    onChangeText={setStandardFee}
+                  />
+                  <Button
+                    title="Save standard tuition"
+                    disabled={!standardFee.trim()}
+                    onPress={() =>
+                      void act(async () => {
+                        const school = await request<SchoolProfile>(
+                          "/v1/local/school-fee",
+                          "PUT",
+                          { feePaise: rupeesToPaise(standardFee) },
+                        );
+                        setProfile(school);
+                        setNotice("Standard tuition saved.");
+                      })
+                    }
+                  />
+                </Card>
+              )}
+              {manageRole && (
+                <Card>
+                  <Text style={styles.label}>
+                    WhatsApp reminder limits · IST
+                  </Text>
+                  {(
+                    [
+                      ["reminderStartHour", "Start hour (0–23)"],
+                      ["reminderEndHour", "End hour (1–24)"],
+                      ["reminderDailyCap", "Daily cap per recipient (1–10)"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <Field
+                      key={key}
+                      label={label}
+                      keyboardType="number-pad"
+                      value={String(reminderLimits[key])}
+                      onChangeText={(value) => {
+                        if (/^\d{0,2}$/.test(value))
+                          setReminderLimits({
+                            ...reminderLimits,
+                            [key]: Number(value),
+                          });
+                      }}
+                    />
+                  ))}
+                  <Button
+                    title="Save reminder limits"
+                    secondary
+                    onPress={() =>
+                      void act(async () => {
+                        await request(
+                          "/v1/reminder-settings",
+                          "PUT",
+                          reminderLimits,
+                        );
+                        setNotice("Reminder limits saved.");
+                      })
+                    }
+                  />
+                </Card>
+              )}
               {session.user.roles.includes("OWNER" as never) && (
                 <BackupPanel
                   token={session.token}
@@ -1043,10 +2141,64 @@ function App() {
                   />
                 ))}
                 <Text style={styles.sub}>
-                  Single-device mode. Support: harshithhari.bh@gmail.com. No cloud connection.
+                  {profile?.storage === "cloud"
+                    ? "Google Drive storage"
+                    : "Device storage"}
                 </Text>
+                {cloud && (
+                  <Text selectable style={styles.sub}>
+                    Cloud workspace ID {cloud.workspaceId}
+                  </Text>
+                )}
+                {!!syncStatus && (
+                  <Text accessibilityLiveRegion="polite" style={styles.sub}>
+                    {syncStatus}
+                  </Text>
+                )}
+                {cloud && (
+                  <Button
+                    title="Sync Google Drive now"
+                    secondary
+                    onPress={() =>
+                      void act(async () =>
+                        setSyncStatus(await syncCloud(cloud)),
+                      )
+                    }
+                  />
+                )}
+                <Text style={styles.sub}>
+                  Direct UPI · Razorpay (coming later)
+                </Text>
+                {session.user.roles.includes("OWNER" as never) && (
+                  <>
+                    <Field
+                      label="UPI address"
+                      autoCapitalize="none"
+                      value={vpa}
+                      onChangeText={setVpa}
+                    />
+                    <Button
+                      title="Save UPI address"
+                      disabled={!validVpa(vpa)}
+                      secondary
+                      onPress={() =>
+                        void act(async () => {
+                          setProfile(
+                            await request<SchoolProfile>(
+                              "/v1/local/profile",
+                              "POST",
+                              { vpa },
+                            ),
+                          );
+                          setPay(null);
+                          setNotice("UPI address saved.");
+                        })
+                      }
+                    />
+                  </>
+                )}
                 <Button
-                  title="Sign out and clear this device"
+                  title="Sign out"
                   secondary
                   onPress={() => void act(logout)}
                 />

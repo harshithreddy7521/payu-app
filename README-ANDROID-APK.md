@@ -229,7 +229,7 @@ custom SQLCipher configuration; test the actual installed native APK.
 
 ## 7. First use and backup acceptance test
 
-1. Create a local administrator. There is no default administrator password.
+1. Choose **Create a school account**, enter school and administrator details, and set the school UPI address. Then sign in.
 2. Add a collector and verify export/import controls are hidden for that account.
 3. Create sample members, groups and bills; record a **synthetic** test payment.
 4. As admin, use **Settings → Admin controls → Export all tables**. Supply the
@@ -242,8 +242,9 @@ custom SQLCipher configuration; test the actual installed native APK.
    damaged-file rejection before trusting backup recovery.
 8. Check app locking after background/restart and UPI handoff on your own phone.
 
-No hosted checkout page, cloud sync or notifications exist in this offline
-edition. Direct UPI QR requests can transfer real money; a scan/app return never
+The offline edition uses on-device storage. For a cloud-enabled APK, set
+`EXPO_PUBLIC_WEB_URL` to the HTTPS web console before building. See the main
+README for Google Drive setup. Direct UPI QR requests can transfer real money; a scan/app return never
 marks a bill paid. Admin staff must verify the receiving account first.
 
 Existing server/web data is not automatically migrated into the local edition.

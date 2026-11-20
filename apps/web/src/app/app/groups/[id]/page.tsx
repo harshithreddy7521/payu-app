@@ -1,12 +1,18 @@
 "use client";
+import EnrollmentFields, {
+  defaultEnrollment,
+} from "@/components/EnrollmentFields";
+import type { FeePlan } from "../../../../../../mobile/src/local/feePlans";
 import { useEffect, useState, useRef, use } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
-import { getToken } from "@/lib/auth";
+import { getToken, isDeviceWorkspace } from "@/lib/auth";
 type Group = {
   id: string;
   name: string;
   amountPaise: number;
+  frequency?: string;
+  feePlan?: FeePlan;
   isActive: boolean;
   nextBillDates: string[];
   memberships: {
@@ -15,6 +21,10 @@ type Group = {
     leftAt: string | null;
     amountPaise: number | null;
     member: { name: string };
+    paymentPlan?: string;
+    hostel?: boolean;
+    paidThrough?: string;
+    accessStatus?: string;
   }[];
   reminderPolicies: {
     offsetDays: number;
@@ -30,6 +40,7 @@ export default function GroupDetail({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const [enrollment, setEnrollment] = useState(defaultEnrollment);
   const [group, setGroup] = useState<Group | null>(null),
     [members, setMembers] = useState<{ id: string; name: string }[]>([]),
     [member, setMember] = useState(""),
@@ -96,8 +107,17 @@ export default function GroupDetail({
           <p className="eyebrow">GROWING TOGETHER</p>
           <h1 className="page-title">{group.name}</h1>
           <p className="page-subtitle">
-            ₹{(group.amountPaise / 100).toLocaleString("en-IN")} per month ·{" "}
-            {group.isActive ? "Billing active" : "Billing paused"}
+            ₹{(group.amountPaise / 100).toLocaleString("en-IN")} per{" "}
+            {group.feePlan
+              ? group.feePlan.mode === "SCHOOL"
+                ? "academic year"
+                : "term"
+              : group.frequency === "QUARTERLY"
+                ? "quarter"
+                : group.frequency === "YEARLY"
+                  ? "year"
+                  : "month"}{" "}
+            · {group.isActive ? "Billing active" : "Billing paused"}
           </p>
         </div>
         <button
@@ -122,36 +142,84 @@ export default function GroupDetail({
           {message}
         </p>
       )}
-      <section className="card insight-panel" style={{ marginBottom: 24 }}>
-        <h3>Your next three cycles</h3>
-        <p>Existing bills keep their original terms when a group changes.</p>
-        <div className="cycle-grid">
-          {group.nextBillDates.map((d) => (
-            <div className="cycle-card" key={d}>
-              <small>ISSUE DATE · IST</small>
-              <strong>{d}</strong>
-              <p>₹{(group.amountPaise / 100).toLocaleString("en-IN")}</p>
-            </div>
+      {group.feePlan ? (
+        <section className="card insight-panel" style={{ marginBottom: 24 }}>
+          <h3>
+            {group.feePlan.mode === "SCHOOL"
+              ? "Academic year fee"
+              : "Program fees"}
+          </h3>
+          {group.feePlan.mode === "SCHOOL" ? (
+            <>
+              <p>
+                Year starts {group.feePlan.startsOn} · Tuition ₹
+                {(group.amountPaise / 100).toLocaleString("en-IN")}
+              </p>
+              {group.feePlan.hostelPaise > 0 && (
+                <p>
+                  Optional hostel ₹
+                  {(group.feePlan.hostelPaise / 100).toLocaleString("en-IN")}
+                </p>
+              )}
+            </>
+          ) : (
+            <p>
+              {group.feePlan.months}-month{" "}
+              {group.feePlan.mode === "SPORTS_RENEWAL"
+                ? "renewable membership"
+                : "fixed term"}
+            </p>
+          )}
+          {group.feePlan.charges.map((charge) => (
+            <p key={charge.name}>
+              {charge.name} · ₹
+              {(charge.amountPaise / 100).toLocaleString("en-IN")} ·{" "}
+              {charge.upfront ? "Upfront" : "Spread"}
+              {charge.optional ? " · Optional" : ""}
+            </p>
           ))}
-        </div>
-        {!group.nextBillDates.length && (
-          <p className="notice">
-            No future cycles before this group’s end date.
-          </p>
-        )}
-      </section>
+        </section>
+      ) : (
+        <section className="card insight-panel" style={{ marginBottom: 24 }}>
+          <h3>Your next three cycles</h3>
+          <p>Existing bills keep their original terms when a group changes.</p>
+          <div className="cycle-grid">
+            {group.nextBillDates.map((d) => (
+              <div className="cycle-card" key={d}>
+                <small>ISSUE DATE · IST</small>
+                <strong>{d}</strong>
+                <p>₹{(group.amountPaise / 100).toLocaleString("en-IN")}</p>
+              </div>
+            ))}
+          </div>
+          {!group.nextBillDates.length && (
+            <p className="notice">
+              No future cycles before this group’s end date.
+            </p>
+          )}
+        </section>
+      )}
+
       <div className="dashboard-bottom">
         <section className="card insight-panel">
           <h3>Members in this group</h3>
-          <p>Joining now starts billing at the next eligible cycle.</p>
+          <p>
+            {group.feePlan
+              ? "Fees come from the class or program. Choose a payment plan for each member."
+              : "Joining now starts billing at the next eligible cycle."}
+          </p>
           <form
             onSubmit={(e) => {
               e.preventDefault();
               void action(`/v1/groups/${id}/members`, "POST", {
                 memberId: member,
-                amountPaise: amount
-                  ? Math.round(Number(amount) * 100)
-                  : undefined,
+                ...(group.feePlan
+                  ? enrollment
+                  : {
+                      amountPaise: amount
+                        ? Math.round(Number(amount) * 100)
+                        : undefined,
+                    }),
               });
             }}
           >
@@ -181,22 +249,30 @@ export default function GroupDetail({
                   ))}
               </select>
             </div>
-            <div className="field">
-              <label className="label" htmlFor="override">
-                Monthly override (₹, optional)
-              </label>
-              <input
-                id="override"
-                className="input"
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+            {group.feePlan ? (
+              <EnrollmentFields
+                plan={group.feePlan}
+                value={enrollment}
+                onChange={setEnrollment}
               />
-            </div>
+            ) : (
+              <div className="field">
+                <label className="label" htmlFor="override">
+                  Monthly override (₹, optional)
+                </label>
+                <input
+                  id="override"
+                  className="input"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+              </div>
+            )}
             <button className="btn btn-primary" disabled={busy}>
-              Add to next cycle
+              {group.feePlan ? "Enroll member" : "Add to next cycle"}
             </button>
           </form>
           <div style={{ marginTop: 24 }}>
@@ -219,11 +295,31 @@ export default function GroupDetail({
                     <small
                       style={{ display: "block", color: "var(--text-muted)" }}
                     >
-                      ₹
-                      {(
-                        (m.amountPaise ?? group.amountPaise) / 100
-                      ).toLocaleString("en-IN")}
-                      /month
+                      {group.feePlan ? (
+                        [
+                          m.paymentPlan === "FULL" &&
+                          group.feePlan.mode === "SPORTS_RENEWAL"
+                            ? "Per renewal"
+                            : m.paymentPlan,
+                          m.hostel ? "Hostel" : "",
+                          m.accessStatus
+                            ? m.accessStatus === "ACTIVE"
+                              ? "Access active"
+                              : "Access paused"
+                            : "",
+                          m.paidThrough ? "Paid until " + m.paidThrough : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")
+                      ) : (
+                        <>
+                          ₹
+                          {(
+                            (m.amountPaise ?? group.amountPaise) / 100
+                          ).toLocaleString("en-IN")}
+                          /cycle
+                        </>
+                      )}
                     </small>
                   </span>
                   <button
@@ -242,100 +338,112 @@ export default function GroupDetail({
               ))}
           </div>
         </section>
-        <section className="card insight-panel">
-          <h3>A gentle nudge, at the right time.</h3>
-          <p>
-            Schedule reminders in IST. Payment, contact preferences, and
-            outstanding balance are checked before every send.
-          </p>
-          <p className="notice">
-            Active policy:{" "}
-            {group.reminderPolicies
-              .filter((p) => p.isActive)
-              .map(
-                (p) =>
-                  `${p.offsetDays > 0 ? "+" : ""}${p.offsetDays}d · ${p.sendTimeIST}`,
-              )
-              .join(" / ") || "No reminders"}
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void action(
-                `/v1/groups/${id}/reminders`,
-                "PUT",
-                offsets.split(",").map((o) => ({
-                  offsetDays: Number(o.trim()),
-                  sendTimeIST: time,
-                  language,
-                  channels:
-                    channel === "FALLBACK" ? ["WHATSAPP", "SMS"] : [channel],
-                })),
-              );
-            }}
-          >
-            <div className="field">
-              <label className="label" htmlFor="offsets">
-                Days relative to due date
-              </label>
-              <input
-                id="offsets"
-                className="input"
-                value={offsets}
-                onChange={(e) => setOffsets(e.target.value)}
-                placeholder="-3, 0, 3"
-                required
-              />
-            </div>
-            <div className="form-row">
+        {group.feePlan ? (
+          <section className="card insight-panel">
+            <h3>Reminders</h3>
+            <p>
+              {group.feePlan.mode === "SPORTS_RENEWAL"
+                ? "Renewal reminders start seven days before expiry. The next charge waits until the current renewal is paid."
+                : "Monthly reminders include the current amount due and any unpaid balance from earlier installments."}
+            </p>
+            <Link href="/app/reminders">Open reminders</Link>
+          </section>
+        ) : (
+          <section className="card insight-panel">
+            <h3>A gentle nudge, at the right time.</h3>
+            <p>
+              Schedule reminders in IST. Payment, contact preferences, and
+              outstanding balance are checked before every send.
+            </p>
+            <p className="notice">
+              Active policy:{" "}
+              {group.reminderPolicies
+                .filter((p) => p.isActive)
+                .map(
+                  (p) =>
+                    `${p.offsetDays > 0 ? "+" : ""}${p.offsetDays}d · ${p.sendTimeIST}`,
+                )
+                .join(" / ") || "No reminders"}
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void action(
+                  `/v1/groups/${id}/reminders`,
+                  "PUT",
+                  offsets.split(",").map((o) => ({
+                    offsetDays: Number(o.trim()),
+                    sendTimeIST: time,
+                    language,
+                    channels:
+                      channel === "FALLBACK" ? ["WHATSAPP", "SMS"] : [channel],
+                  })),
+                );
+              }}
+            >
               <div className="field">
-                <label className="label" htmlFor="time">
-                  Send time IST (08:00–19:59)
+                <label className="label" htmlFor="offsets">
+                  Days relative to due date
                 </label>
                 <input
-                  id="time"
+                  id="offsets"
                   className="input"
-                  type="time"
-                  min="08:00"
-                  max="19:59"
-                  value={time}
-                  onChange={(e) => setTime(e.target.value)}
+                  value={offsets}
+                  onChange={(e) => setOffsets(e.target.value)}
+                  placeholder="-3, 0, 3"
                   required
                 />
               </div>
+              <div className="form-row">
+                <div className="field">
+                  <label className="label" htmlFor="time">
+                    Send time IST (08:00–19:59)
+                  </label>
+                  <input
+                    id="time"
+                    className="input"
+                    type="time"
+                    min="08:00"
+                    max="19:59"
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label className="label" htmlFor="language">
+                    Language
+                  </label>
+                  <select
+                    id="language"
+                    className="select"
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                  >
+                    <option value="en">English</option>
+                    <option value="hi">Hindi</option>
+                  </select>
+                </div>
+              </div>
               <div className="field">
-                <label className="label" htmlFor="language">
-                  Language
+                <label className="label" htmlFor="channel">
+                  Channel
                 </label>
                 <select
-                  id="language"
+                  id="channel"
                   className="select"
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
+                  value={channel}
+                  onChange={(e) => setChannel(e.target.value)}
                 >
-                  <option value="en">English</option>
-                  <option value="hi">Hindi</option>
+                  <option value="WHATSAPP">WhatsApp</option>
                 </select>
               </div>
-            </div>
-            <div className="field">
-              <label className="label" htmlFor="channel">
-                Channel
-              </label>
-              <select
-                id="channel"
-                className="select"
-                value={channel}
-                onChange={(e) => setChannel(e.target.value)}
-              >
-                <option value="WHATSAPP">WhatsApp</option>
-              </select>
-            </div>
-            <button className="btn btn-primary" disabled={busy}>
-              Save reminder policy
-            </button>
-          </form>
-        </section>
+              <button className="btn btn-primary" disabled={busy}>
+                Save reminder policy
+              </button>
+            </form>
+          </section>
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,7 @@
 "use client";
 
+import { setDeviceSession } from "./device-store";
+import { lock } from "../../../mobile/src/local/api";
 import { apiFetch } from "./api";
 import type { LoginResponse, UserSummary } from "@fee/shared";
 
@@ -28,13 +30,23 @@ export async function login(
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  sessionStorage.removeItem("fee_branch");
-  sessionStorage.setItem(TOKEN_KEY, res.token);
-  sessionStorage.setItem(USER_KEY, JSON.stringify(res.user));
+  saveSession(res);
   return res.user;
 }
 
+export function saveSession(res: LoginResponse) {
+  sessionStorage.removeItem("fee_branch");
+  sessionStorage.setItem(TOKEN_KEY, res.token);
+  sessionStorage.setItem(USER_KEY, JSON.stringify(res.user));
+}
+
+export function isDeviceWorkspace() {
+  return getUser()?.orgId === "local";
+}
+
 export function logout() {
+  lock();
+  setDeviceSession();
   sessionStorage.removeItem("fee_branch");
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(USER_KEY);

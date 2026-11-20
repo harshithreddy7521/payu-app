@@ -17,9 +17,10 @@ export async function seal(
   password: string,
   salt: Uint8Array,
   nonce: Uint8Array,
+  minimumLength = 12,
 ) {
-  if (password.length < 12)
-    throw new Error("Use a backup passphrase of at least 12 characters.");
+  if (password.length < minimumLength)
+    throw new Error(`Use a passphrase of at least ${minimumLength} characters.`);
   const key = await passwordKey(password, hex(salt));
   try {
     return JSON.stringify({

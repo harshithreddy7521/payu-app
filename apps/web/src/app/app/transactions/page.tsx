@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { getToken, getUser } from "@/lib/auth";
+import { getToken, getUser, isDeviceWorkspace } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 
 type Tx = {
@@ -10,6 +10,7 @@ type Tx = {
   purpose: string;
   amountPaise: number;
   paidPaise: number;
+  plannedTotalPaise?: number;
   status: string;
   createdAt: string;
   payments: {
@@ -49,7 +50,8 @@ export default function TransactionsPage() {
   const [canVerify, setCanVerify] = useState(false);
   function openForm(bill: Tx) {
     setSelected(bill);
-    setAmount(((bill.amountPaise - bill.paidPaise) / 100).toFixed(2));
+    const due = bill.amountPaise - bill.paidPaise;
+    setAmount(((due || remaining(bill)) / 100).toFixed(2));
     setReference("");
     setReceivedAt(
       new Date(Date.now() + 330 * 60000).toISOString().slice(0, 16),
@@ -69,11 +71,7 @@ export default function TransactionsPage() {
         { token: getToken()! },
       );
       setTxs(r.data);
-      if (
-        openRequested &&
-        id &&
-        getUser()?.roles.some((role) => ["OWNER", "FINANCE"].includes(role))
-      ) {
+      if (openRequested && id && canRecordPayment()) {
         const bill = r.data.find((b) => b.id === id);
         if (
           bill &&
@@ -89,10 +87,7 @@ export default function TransactionsPage() {
     }
   }
   useEffect(() => {
-    setCanVerify(
-      getUser()?.roles.some((role) => ["OWNER", "FINANCE"].includes(role)) ??
-        false,
-    );
+    setCanVerify(canRecordPayment() ?? false);
     void load(true);
   }, []);
   useEffect(() => {
@@ -105,7 +100,7 @@ export default function TransactionsPage() {
     if (
       !Number.isSafeInteger(paise) ||
       paise <= 0 ||
-      paise > selected.amountPaise - selected.paidPaise
+      paise > remaining(selected)
     ) {
       setFormError("Enter an amount up to the outstanding balance.");
       return;
@@ -248,7 +243,7 @@ export default function TransactionsPage() {
                   type="number"
                   min="0.01"
                   step="0.01"
-                  max={(selected.amountPaise - selected.paidPaise) / 100}
+                  max={remaining(selected) / 100}
                   required
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
@@ -425,8 +420,9 @@ export default function TransactionsPage() {
                     </div>
                   ))}
                   {canVerify &&
-                    ["ISSUED", "PARTIAL", "EXPIRED"].includes(t.status) &&
-                    t.paidPaise < t.amountPaise && (
+                    (t.plannedTotalPaise !== undefined ||
+                      ["ISSUED", "PARTIAL", "EXPIRED"].includes(t.status)) &&
+                    remaining(t) > 0 && (
                       <button
                         className="btn btn-ghost"
                         onClick={() => {
@@ -444,5 +440,20 @@ export default function TransactionsPage() {
         </table>
       </div>
     </div>
+  );
+}
+
+function remaining(bill: Tx) {
+  return (
+    Math.max(bill.amountPaise, bill.plannedTotalPaise ?? 0) - bill.paidPaise
+  );
+}
+
+function canRecordPayment() {
+  const user = getUser();
+  return Boolean(
+    user &&
+    ((isDeviceWorkspace() && user.profile === "RESTAURANT") ||
+      user.roles.some((role) => ["OWNER", "FINANCE"].includes(role))),
   );
 }
